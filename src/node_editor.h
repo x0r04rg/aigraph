@@ -1,15 +1,3 @@
-/* nuklear - v1.00 - public domain */
-/* This is a simple node editor just to show a simple implementation and that
- * it is possible to achieve it with this library. While all nodes inside this
- * example use a simple color modifier as content you could change them
- * to have your custom content depending on the node time.
- * Biggest difference to most usual implementation is that this example does
- * not have connectors on the right position of the property that it links.
- * This is mainly done out of laziness and could be implemented as well but
- * requires calculating the position of all rows and add connectors.
- * In addition adding and removing nodes is quite limited at the
- * moment since it is based on a simple fixed array. If this is to be converted
- * into something more serious it is probably best to extend it.*/
 
 struct node {
     int ID;
@@ -197,7 +185,7 @@ node_editor_init(struct node_editor *editor)
 }
 
 static int
-node_editor(struct nk_context *ctx)
+node_editor(struct nk_context *ctx, struct nk_rect win_size, nk_flags flags)
 {
     int n = 0;
     struct nk_rect total_space;
@@ -212,8 +200,7 @@ node_editor(struct nk_context *ctx)
         nodeEditor.initialized = 1;
     }
 
-    if (nk_begin(ctx, "NodeEdit", nk_rect(0, 0, 800, 600),
-        NK_WINDOW_BORDER|NK_WINDOW_NO_SCROLLBAR|NK_WINDOW_MOVABLE|NK_WINDOW_CLOSABLE))
+    if (nk_begin(ctx, "NodeEdit", win_size, flags))
     {
         /* allocate complete window space */
         canvas = nk_window_get_canvas(ctx);

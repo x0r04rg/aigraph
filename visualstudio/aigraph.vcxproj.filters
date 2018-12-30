@@ -10,7 +10,7 @@
     <ClCompile Include="..\src\main.c" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\src\nuklear_glfw_gl3.h" />
     <ClInclude Include="..\src\node_editor.h" />
+    <ClInclude Include="..\src\nuklear_sdl_gl3.h" />
   </ItemGroup>
 </Project>
