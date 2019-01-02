@@ -2,8 +2,6 @@
 #include <SDL2/SDL_rwops.h>
 #include "aigraph.h"
 
-#define NODE_HEADER_HEIGHT 45.0f
-#define NODE_ROW_HEIGHT 25.0f
 #define NODE_WIDTH 180.0f
 
 struct node {
@@ -146,8 +144,8 @@ node_editor_add(struct node_editor *editor, node_type type, float pos_x, float p
     memset(node, 0, sizeof *node);
     node->ID = IDs++;
     node->type = type;
-    node->bounds = nk_rect(pos_x, pos_y, NODE_WIDTH, NODE_ROW_HEIGHT * 
-        max(infos[type].input_count, infos[type].output_count) + NODE_HEADER_HEIGHT);
+    node->bounds = nk_rect(pos_x, pos_y, NODE_WIDTH, 30 * 
+        max(infos[type].input_count, infos[type].output_count) + 35);
     node_editor_push(editor, node);
 }
 
@@ -243,7 +241,7 @@ node_editor(struct nk_context *ctx, struct nk_rect win_size, nk_flags flags)
                     }
 
                     /* ================= NODE CONTENT =====================*/
-                    nk_layout_row_dynamic(ctx, NODE_ROW_HEIGHT, 1);
+                    nk_layout_row_dynamic(ctx, 25, 1);
                     struct node_info info = infos[it->type];
                     for (int i = 0; i < info.input_count; i++)
                     {
@@ -263,11 +261,11 @@ node_editor(struct nk_context *ctx, struct nk_rect win_size, nk_flags flags)
                     it->bounds = bounds;
 
                     /* output connector */
-                    space = NODE_ROW_HEIGHT;
+                    space = 29;
                     for (n = 0; n < infos[it->type].output_count; ++n) {
                         struct nk_rect circle;
                         circle.x = node->bounds.x + node->bounds.w-4;
-                        circle.y = node->bounds.y + space * (float)n + NODE_HEADER_HEIGHT - 2.0f;
+                        circle.y = node->bounds.y + space * (float)n + node->header_height + 14;
                         circle.w = 8; circle.h = 8;
                         nk_fill_circle(canvas, circle, nk_rgb(100, 100, 100));
 
@@ -290,11 +288,11 @@ node_editor(struct nk_context *ctx, struct nk_rect win_size, nk_flags flags)
                     }
 
                     /* input connector */
-                    space = NODE_ROW_HEIGHT;
+                    space = 29;
                     for (n = 0; n < infos[it->type].input_count; ++n) {
                         struct nk_rect circle;
                         circle.x = node->bounds.x-4;
-                        circle.y = node->bounds.y + space * (float)n + NODE_HEADER_HEIGHT - 2.0f;
+                        circle.y = node->bounds.y + space * (float)n + node->header_height + 14;
                         circle.w = 8; circle.h = 8;
                         nk_fill_circle(canvas, circle, nk_rgb(100, 100, 100));
                         if (nk_input_is_mouse_released(in, NK_BUTTON_LEFT) &&
@@ -321,12 +319,12 @@ node_editor(struct nk_context *ctx, struct nk_rect win_size, nk_flags flags)
                 struct node_link *link = &nodedit->links[n];
                 struct node *ni = node_editor_find(nodedit, link->input_id);
                 struct node *no = node_editor_find(nodedit, link->output_id);
-                float spacei = NODE_ROW_HEIGHT;
-                float spaceo = NODE_ROW_HEIGHT;
+                float spacei = 29;
+                float spaceo = 29;
                 struct nk_vec2 l0 = nk_layout_space_to_screen(ctx,
-                    nk_vec2(ni->bounds.x + ni->bounds.w, 3.0f + ni->bounds.y + spacei * (float)(link->input_slot) + NODE_HEADER_HEIGHT - 2.0f));
+                    nk_vec2(ni->bounds.x + ni->bounds.w, 3.0f + ni->bounds.y + spacei * (float)(link->input_slot) + 43));
                 struct nk_vec2 l1 = nk_layout_space_to_screen(ctx,
-                    nk_vec2(no->bounds.x, 3.0f + no->bounds.y + spaceo * (float)(link->output_slot) + NODE_HEADER_HEIGHT - 2.0f));
+                    nk_vec2(no->bounds.x, 3.0f + no->bounds.y + spaceo * (float)(link->output_slot) + 43));
 
                 l0.x -= nodedit->scrolling.x;
                 l0.y -= nodedit->scrolling.y;
@@ -334,13 +332,13 @@ node_editor(struct nk_context *ctx, struct nk_rect win_size, nk_flags flags)
                 l1.y -= nodedit->scrolling.y;
 
                 struct nk_color clr = nk_rgb(100, 100, 100);
-                if (selected_link == -1 && 
+                /*if (selected_link == -1 && 
                     is_hovering_curve(in->mouse.pos.x, in->mouse.pos.y, l0.x, l0.y,
                         l0.x + 50.0f, l0.y, l1.x - 50.0f, l1.y, l1.x, l1.y, 10, 7))
                 {
                     clr = nk_red;
                     selected_link = n;
-                }
+                }*/
                 nk_stroke_curve(canvas, l0.x, l0.y, l0.x + 50.0f, l0.y,
                     l1.x - 50.0f, l1.y, l1.x, l1.y, 1.0f, clr);
             }
@@ -351,11 +349,11 @@ node_editor(struct nk_context *ctx, struct nk_rect win_size, nk_flags flags)
                 node_editor_push(nodedit, updated);
             }
 
-            if (selected_link != -1 && nk_input_is_key_down(in, NK_KEY_DEL))
+            /*if (selected_link != -1 && nk_input_is_key_down(in, NK_KEY_DEL))
             {
                 node_editor_unlink(nodedit, selected_link);
                 selected_link = -1;
-            }
+            }*/
 
             /* node selection */
             if (nk_input_mouse_clicked(in, NK_BUTTON_LEFT, nk_layout_space_bounds(ctx))) {
@@ -375,11 +373,15 @@ node_editor(struct nk_context *ctx, struct nk_rect win_size, nk_flags flags)
             /* contextual menu */
             if (nk_contextual_begin(ctx, 0, nk_vec2(100, 220), nk_window_get_bounds(ctx))) {
                 nk_layout_row_dynamic(ctx, 25, 1);
-                const char *grid_option[] = {"Show Grid", "Hide Grid"};
-                if (nk_contextual_item_label(ctx, "New", NK_TEXT_CENTERED))
-                    node_editor_add(nodedit, NODE_SUM, 400, 260);
-                if (nk_contextual_item_label(ctx, grid_option[nodedit->show_grid], NK_TEXT_CENTERED))
-                    nodedit->show_grid = !nodedit->show_grid;
+                for (int i = 0; i < NODE_TYPE_COUNT; i++)
+                {
+                    if (nk_contextual_item_label(ctx, infos[i].name, NK_TEXT_CENTERED))
+                    {
+                        struct nk_rect bounds = nk_layout_widget_bounds(ctx);
+                        node_editor_add(nodedit, (node_type)i, bounds.x - nodedit->scrolling.x,
+                            bounds.y - nodedit->scrolling.y);
+                    }
+                }
                 nk_contextual_end(ctx);
             }
         }

@@ -8,7 +8,8 @@ enum { MAX_INPUTS = 5, MAX_OUTPUTS = 5 };
 typedef enum
 {
     NODE_SUM,
-    NODE_INVERT,
+    NODE_NEGATE,
+    NODE_SUM3,
     NODE_TYPE_COUNT
 } node_type;
 
@@ -41,14 +42,21 @@ struct node_base
 
 struct sum
 {
-    struct node_base;
-    float *in0, *in1, out;
+    struct node_base base;
+    float *in0, *in1;
+    float out;
 };
 
-struct inertia
+struct sum3
 {
-    struct node_base;
-    float last;
+    struct node_base base;
+    float *in0, *in1, *in2;
+    float out;
+};
+
+struct negate
+{
+    struct node_base base;
     float *in, out;
 };
 
@@ -56,18 +64,30 @@ struct node_info infos[NODE_TYPE_COUNT];
 
 void fill_infos()
 {
-    {
-        infos[NODE_SUM].name = "Sum";
-        infos[NODE_SUM].size = sizeof(struct sum);
-        infos[NODE_SUM].input_count = 2;
-        infos[NODE_SUM].inputs[0].name = "In 1";
-        infos[NODE_SUM].inputs[0].offset = offsetof(struct sum, in0);
-        infos[NODE_SUM].inputs[1].name = "In 2";
-        infos[NODE_SUM].inputs[1].offset = offsetof(struct sum, in1);
-        infos[NODE_SUM].output_count = 1;
-        infos[NODE_SUM].outputs[0].name = "Out";
-        infos[NODE_SUM].outputs[0].offset = offsetof(struct sum, out);
-    }
+#define INPUT(field) infos[t].inputs[infos[t].input_count].name = #field; \
+    infos[t].inputs[infos[t].input_count++].offset = ((size_t)&it.field) - ((size_t)&it);
+
+#define OUTPUT(field) infos[t].outputs[infos[t].output_count].name = #field; \
+    infos[t].outputs[infos[t].output_count++].offset = ((size_t)&it.field) - ((size_t)&it);
+
+#define NODE(type, tag, ...) \
+{ \
+    struct type it; \
+    node_type t = tag; \
+    infos[tag].name = #type; \
+    infos[tag].size = sizeof(struct type); \
+    infos[tag].input_count = 0; \
+    infos[tag].output_count = 0; \
+    __VA_ARGS__\
+}
+
+    NODE(sum, NODE_SUM, INPUT(in0) INPUT(in1) OUTPUT(out))
+    NODE(sum3, NODE_SUM3, INPUT(in0) INPUT(in1) INPUT(in2) OUTPUT(out));
+    NODE(negate, NODE_NEGATE, INPUT(in) OUTPUT(out))
+
+#undef INPUT
+#undef OUTPUT
+#undef NODE
 }
 
 #endif
