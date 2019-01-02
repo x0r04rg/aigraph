@@ -149,6 +149,17 @@ node_editor_add(struct node_editor *editor, node_type type, float pos_x, float p
     node_editor_push(editor, node);
 }
 
+static int
+node_editor_find_link_by_output(struct node_editor *editor, int out_id, int out_slot)
+{
+    for (int i = 0; i < editor->link_count; i++)
+    {
+        if (editor->links[i].output_id == out_id && editor->links[i].output_slot == out_slot)
+            return i;
+    }
+    return -1;
+}
+
 static void
 node_editor_link(struct node_editor *editor, int in_id, int in_slot,
     int out_id, int out_slot)
@@ -191,7 +202,6 @@ node_editor(struct nk_context *ctx, struct nk_rect win_size, nk_flags flags)
     struct nk_command_buffer *canvas;
     struct node *updated = 0;
     struct node_editor *nodedit = &nodeEditor;
-    int selected_link = -1;
 
     if (!nodeEditor.initialized) {
         node_editor_init(&nodeEditor);
@@ -295,12 +305,28 @@ node_editor(struct nk_context *ctx, struct nk_rect win_size, nk_flags flags)
                         circle.y = node->bounds.y + space * (float)n + node->header_height + 14;
                         circle.w = 8; circle.h = 8;
                         nk_fill_circle(canvas, circle, nk_rgb(100, 100, 100));
-                        if (nk_input_is_mouse_released(in, NK_BUTTON_LEFT) &&
-                            nk_input_is_mouse_hovering_rect(in, circle) &&
-                            nodedit->linking.active && nodedit->linking.node != it) {
-                            nodedit->linking.active = nk_false;
-                            node_editor_link(nodedit, nodedit->linking.input_id,
-                                nodedit->linking.input_slot, it->ID, n);
+                        if (nk_input_is_mouse_hovering_rect(in, circle))
+                        {
+                            if (nk_input_is_mouse_released(in, NK_BUTTON_LEFT) &&
+                                node_editor_find_link_by_output(nodedit, it->ID, n) == -1 &&
+                                nodedit->linking.active && nodedit->linking.node != it) {
+                                nodedit->linking.active = nk_false;
+                                node_editor_link(nodedit, nodedit->linking.input_id,
+                                    nodedit->linking.input_slot, it->ID, n);
+                            }
+                            if (nk_input_is_mouse_pressed(in, NK_BUTTON_LEFT) &&
+                                !nodedit->linking.active) {
+                                int i = node_editor_find_link_by_output(nodedit, it->ID, n);
+                                if (i != -1)
+                                {
+                                    struct node_link link = nodedit->links[i];
+                                    node_editor_unlink(nodedit, i);
+                                    nodedit->linking.active = nk_true;
+                                    nodedit->linking.node = node_editor_find(nodedit, link.input_id);;
+                                    nodedit->linking.input_id = link.input_id;
+                                    nodedit->linking.input_slot = link.input_slot;
+                                }
+                            }
                         }
                     }
                 }
@@ -311,7 +337,6 @@ node_editor(struct nk_context *ctx, struct nk_rect win_size, nk_flags flags)
             if (nodedit->linking.active && nk_input_is_mouse_released(in, NK_BUTTON_LEFT)) {
                 nodedit->linking.active = nk_false;
                 nodedit->linking.node = NULL;
-                fprintf(stdout, "linking failed\n");
             }
 
             /* draw each link */
@@ -331,16 +356,8 @@ node_editor(struct nk_context *ctx, struct nk_rect win_size, nk_flags flags)
                 l1.x -= nodedit->scrolling.x;
                 l1.y -= nodedit->scrolling.y;
 
-                struct nk_color clr = nk_rgb(100, 100, 100);
-                /*if (selected_link == -1 && 
-                    is_hovering_curve(in->mouse.pos.x, in->mouse.pos.y, l0.x, l0.y,
-                        l0.x + 50.0f, l0.y, l1.x - 50.0f, l1.y, l1.x, l1.y, 10, 7))
-                {
-                    clr = nk_red;
-                    selected_link = n;
-                }*/
                 nk_stroke_curve(canvas, l0.x, l0.y, l0.x + 50.0f, l0.y,
-                    l1.x - 50.0f, l1.y, l1.x, l1.y, 1.0f, clr);
+                    l1.x - 50.0f, l1.y, l1.x, l1.y, 1.0f, nk_rgb(100, 100, 100));
             }
 
             if (updated) {
@@ -348,12 +365,6 @@ node_editor(struct nk_context *ctx, struct nk_rect win_size, nk_flags flags)
                 node_editor_pop(nodedit, updated);
                 node_editor_push(nodedit, updated);
             }
-
-            /*if (selected_link != -1 && nk_input_is_key_down(in, NK_KEY_DEL))
-            {
-                node_editor_unlink(nodedit, selected_link);
-                selected_link = -1;
-            }*/
 
             /* node selection */
             if (nk_input_mouse_clicked(in, NK_BUTTON_LEFT, nk_layout_space_bounds(ctx))) {
