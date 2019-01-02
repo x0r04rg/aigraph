@@ -144,8 +144,10 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="..\src\main.c" />
+    <ClInclude Include="..\src\aigraph.h" />
     <ClInclude Include="..\src\node_editor.h" />
     <ClInclude Include="..\src\nuklear_sdl_gl3.h" />
+    <ClInclude Include="..\src\runtime.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

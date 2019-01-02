@@ -12,5 +12,7 @@
   <ItemGroup>
     <ClInclude Include="..\src\node_editor.h" />
     <ClInclude Include="..\src\nuklear_sdl_gl3.h" />
+    <ClInclude Include="..\src\runtime.h" />
+    <ClInclude Include="..\src\aigraph.h" />
   </ItemGroup>
 </Project>

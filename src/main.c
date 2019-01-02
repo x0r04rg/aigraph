@@ -91,6 +91,8 @@ int main(void)
     /*set_style(ctx, THEME_DARK);*/
     #endif
 
+    fill_infos();
+
     bg.r = 0.10f, bg.g = 0.18f, bg.b = 0.24f, bg.a = 1.0f;
     while (running)
     {
