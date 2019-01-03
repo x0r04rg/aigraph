@@ -366,9 +366,9 @@ node_editor(struct nk_context *ctx, struct node_editor *nodedit, struct nk_rect 
                 {
                     if (nk_contextual_item_label(ctx, infos[i].name, NK_TEXT_CENTERED))
                     {
-                        struct nk_rect bounds = nk_layout_widget_bounds(ctx);
-                        node_editor_add(nodedit, (node_type)i, bounds.x - nodedit->scrolling.x,
-                            bounds.y - nodedit->scrolling.y);
+                        struct nk_rect b = nk_layout_widget_bounds(ctx);
+                        node_editor_add(nodedit, (node_type)i, b.x + nodedit->scrolling.x, 
+                            b.y + nodedit->scrolling.y);
                     }
                 }
                 nk_contextual_end(ctx);
