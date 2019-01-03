@@ -401,8 +401,8 @@ node_editor(struct nk_context *ctx, struct nk_rect win_size, nk_flags flags)
         /* window content scrolling */
         if (nk_input_is_mouse_hovering_rect(in, nk_window_get_bounds(ctx)) &&
             nk_input_is_mouse_down(in, NK_BUTTON_MIDDLE)) {
-            nodedit->scrolling.x += in->mouse.delta.x;
-            nodedit->scrolling.y += in->mouse.delta.y;
+            nodedit->scrolling.x -= in->mouse.delta.x;
+            nodedit->scrolling.y -= in->mouse.delta.y;
         }
     }
     nk_end(ctx);
