@@ -60,9 +60,9 @@ struct negate
     float *in, out;
 };
 
-struct node_info infos[NODE_TYPE_COUNT];
+static struct node_info infos[NODE_TYPE_COUNT];
 
-void fill_infos()
+static void fill_infos()
 {
 #define INPUT(field) infos[t].inputs[infos[t].input_count].name = #field; \
     infos[t].inputs[infos[t].input_count++].offset = ((size_t)&it.field) - ((size_t)&it);
