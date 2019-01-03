@@ -251,12 +251,22 @@ node_editor(struct nk_context *ctx, struct nk_rect win_size, nk_flags flags)
                     }
 
                     /* ================= NODE CONTENT =====================*/
-                    nk_layout_row_dynamic(ctx, 25, 1);
+                    nk_layout_row_dynamic(ctx, 25, 2);
                     struct node_info info = infos[it->type];
-                    for (int i = 0; i < info.input_count; i++)
+                    for (int i = 0; i < max(info.input_count, info.output_count); i++)
                     {
-                        if (isnan(it->constant_inputs[i])) nk_label(ctx, info.inputs[i].name, NK_TEXT_ALIGN_LEFT | NK_TEXT_ALIGN_MIDDLE);
-                        else it->constant_inputs[i] = nk_propertyf(ctx, info.inputs[i].name, -INFINITY, it->constant_inputs[i], INFINITY, 0.01f, 1);
+                        if (i < info.input_count)
+                        {
+                            if (isnan(it->constant_inputs[i])) nk_label(ctx, info.inputs[i].name, NK_TEXT_ALIGN_LEFT | NK_TEXT_ALIGN_MIDDLE);
+                            else it->constant_inputs[i] = nk_propertyf(ctx, info.inputs[i].name, -INFINITY, it->constant_inputs[i], INFINITY, 0.01f, 1);
+                        }
+                        else
+                            nk_label(ctx, "", 0);
+
+                        if (i < info.output_count)
+                            nk_label(ctx, info.outputs[i].name, NK_TEXT_ALIGN_RIGHT | NK_TEXT_ALIGN_MIDDLE);
+                        else
+                            nk_label(ctx, "", 0);
                     }
                     /* ====================================================*/
                     nk_group_end(ctx);
