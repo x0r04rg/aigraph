@@ -60,9 +60,8 @@ struct negate
     float *in, out;
 };
 
-static struct node_info infos[NODE_TYPE_COUNT];
-
-static void fill_infos()
+static struct node_info* 
+fill_infos()
 {
 #define INPUT(field) infos[t].inputs[infos[t].input_count].name = #field; \
     infos[t].inputs[infos[t].input_count++].offset = ((size_t)&it.field) - ((size_t)&it);
@@ -81,10 +80,13 @@ static void fill_infos()
     __VA_ARGS__\
 }
 
-    NODE(sum, NODE_SUM, INPUT(in0) INPUT(in1) OUTPUT(out))
-    NODE(sum3, NODE_SUM3, INPUT(in0) INPUT(in1) INPUT(in2) OUTPUT(out));
-    NODE(negate, NODE_NEGATE, INPUT(in) OUTPUT(out))
+    struct node_info *infos = malloc(NODE_TYPE_COUNT * sizeof(struct node_info));
 
+    NODE(sum, NODE_SUM, INPUT(in0) INPUT(in1) OUTPUT(out));
+    NODE(sum3, NODE_SUM3, INPUT(in0) INPUT(in1) INPUT(in2) OUTPUT(out));
+    NODE(negate, NODE_NEGATE, INPUT(in) OUTPUT(out));
+
+    return infos;
 #undef INPUT
 #undef OUTPUT
 #undef NODE

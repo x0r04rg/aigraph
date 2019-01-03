@@ -45,6 +45,8 @@ int main(void)
     struct nk_context *ctx;
     struct nk_colorf bg;
 
+    struct node_editor editor;
+
     /* SDL setup */
     SDL_SetHint(SDL_HINT_VIDEO_HIGHDPI_DISABLED, "0");
     SDL_Init(SDL_INIT_VIDEO|SDL_INIT_TIMER|SDL_INIT_EVENTS);
@@ -91,7 +93,7 @@ int main(void)
     /*set_style(ctx, THEME_DARK);*/
     #endif
 
-    fill_infos();
+    node_editor_init(&editor);
 
     bg.r = 0.10f, bg.g = 0.18f, bg.b = 0.24f, bg.a = 1.0f;
     while (running)
@@ -106,7 +108,7 @@ int main(void)
 
         SDL_GetWindowSize(win, &win_width, &win_height);
 
-        node_editor(ctx, nk_rect(0, 0, win_width, win_height), NK_WINDOW_NO_SCROLLBAR);
+        node_editor(ctx, &editor, nk_rect(0, 0, win_width, win_height), NK_WINDOW_NO_SCROLLBAR);
 
         /* Draw */
         glViewport(0, 0, win_width, win_height);
@@ -122,6 +124,7 @@ int main(void)
     }
 
 cleanup:
+    node_editor_cleanup(&editor);
     nk_sdl_shutdown();
     SDL_GL_DeleteContext(glContext);
     SDL_DestroyWindow(win);

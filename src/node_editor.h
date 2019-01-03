@@ -28,17 +28,16 @@ struct node_linking {
 
 struct node_editor {
     int IDs;
-    int initialized;
-    struct node nodes[32];
-    struct node_link links[64];
-    int node_count;
-    int link_count;
+    struct node_info *infos;
+    struct node *nodes;
+    struct node_link *links;
+    size_t node_count, nodes_capacity;
+    size_t link_count, links_capacity;
     struct nk_rect bounds;
-    int *selected_id;
+    int selected_id;
     struct nk_vec2 scrolling;
     struct node_linking linking;
 };
-static struct node_editor nodeEditor;
 
 static float
 line_dist(float ax, float ay, float bx, float by, float cx, float cy)
@@ -99,8 +98,14 @@ node_editor_find(struct node_editor *editor, int ID)
 static void
 node_editor_add(struct node_editor *editor, node_type type, float pos_x, float pos_y)
 {
+    struct node_info *infos = editor->infos;
     struct node *node;
-    NK_ASSERT((nk_size)editor->node_count < NK_LEN(editor->nodes));
+    if (editor->node_count == editor->nodes_capacity)
+    {
+        size_t new_capacity = editor->nodes_capacity ? 2 * editor->nodes_capacity : 10;
+        editor->nodes = realloc(editor->nodes, new_capacity * sizeof(struct node));
+        editor->nodes_capacity = new_capacity;
+    }
     node = &editor->nodes[editor->node_count++];
     memset(node, 0, sizeof *node);
     node->ID = editor->IDs++;
@@ -125,7 +130,12 @@ node_editor_link(struct node_editor *editor, int in_id, int in_slot,
     int out_id, int out_slot)
 {
     struct node_link *link;
-    NK_ASSERT((nk_size)editor->link_count < NK_LEN(editor->links));
+    if (editor->link_count == editor->links_capacity)
+    {
+        size_t new_capacity = editor->links_capacity ? 2 * editor->links_capacity : 30;
+        editor->links = realloc(editor->links, new_capacity * sizeof(struct node_link));
+        editor->links_capacity = new_capacity;
+    }
     link = &editor->links[editor->link_count++];
     link->input_id = in_id;
     link->input_slot = in_slot;
@@ -148,23 +158,28 @@ node_editor_init(struct node_editor *editor)
 {
     memset(editor, 0, sizeof(*editor));
     editor->IDs = 1;
+    editor->infos = fill_infos();
     node_editor_add(editor, NODE_SUM, 40, 10);
 }
 
+static void
+node_editor_cleanup(struct node_editor *editor)
+{
+    free(editor->infos);
+    free(editor->nodes);
+    free(editor->links);
+}
+
 static int
-node_editor(struct nk_context *ctx, struct nk_rect win_size, nk_flags flags)
+node_editor(struct nk_context *ctx, struct node_editor *nodedit, struct nk_rect win_size, 
+    nk_flags flags)
 {
     int n = 0;
     struct nk_rect total_space;
     const struct nk_input *in = &ctx->input;
     struct nk_command_buffer *canvas;
     int updated = -1;
-    struct node_editor *nodedit = &nodeEditor;
-
-    if (!nodeEditor.initialized) {
-        node_editor_init(&nodeEditor);
-        nodeEditor.initialized = 1;
-    }
+    struct node_info *infos = nodedit->infos;
 
     if (nk_begin(ctx, "NodeEdit", win_size, flags))
     {
