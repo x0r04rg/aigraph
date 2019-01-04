@@ -16,13 +16,13 @@ typedef enum
 struct input_info
 {
     char *name;
-    int offset;
+    size_t offset;
 };
 
 struct output_info
 {
     char *name;
-    int offset;
+    size_t offset;
 };
 
 struct node_info
@@ -37,6 +37,7 @@ struct node_info
 
 struct node_base
 {
+    struct node_base *next;
     node_type type;
 };
 
@@ -58,6 +59,11 @@ struct negate
 {
     struct node_base base;
     float *in, out;
+};
+
+struct compiled_graph
+{
+    struct node_base *first;
 };
 
 static struct node_info* 
