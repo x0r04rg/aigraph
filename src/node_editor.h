@@ -114,6 +114,20 @@ node_editor_add(struct node_editor *editor, node_type type, float pos_x, float p
         max(infos[type].input_count, infos[type].output_count) + 35);
 }
 
+static void 
+node_editor_delete(struct node_editor *editor, int node_id)
+{
+    int i = (int)(node_editor_find(editor, node_id) - editor->nodes);
+    editor->nodes[i] = editor->nodes[--editor->node_count];
+    for (i = 0; i < editor->link_count;)
+    {
+        struct node_link *link = &editor->links[i];
+        if (link->input_id == node_id || link->output_id == node_id)
+            editor->links[i] = editor->links[--editor->link_count];
+        else i++;
+    }
+}
+
 static int
 node_editor_find_link_by_output(struct node_editor *editor, int out_id, int out_slot)
 {
@@ -346,7 +360,7 @@ node_editor(struct nk_context *ctx, struct node_editor *nodedit, struct nk_rect 
             }
 
             /* node selection */
-            if (nk_input_mouse_clicked(in, NK_BUTTON_LEFT, nk_layout_space_bounds(ctx))) {
+            if (nk_input_mouse_clicked(in, NK_BUTTON_LEFT|NK_BUTTON_RIGHT, nk_layout_space_bounds(ctx))) {
                 nodedit->selected_id = 0;
                 nodedit->bounds = nk_rect(in->mouse.pos.x, in->mouse.pos.y, 100, 200);
                 for (int i = 0; i < nodedit->node_count; i++) {
@@ -362,15 +376,27 @@ node_editor(struct nk_context *ctx, struct node_editor *nodedit, struct nk_rect 
             /* contextual menu */
             if (nk_contextual_begin(ctx, 0, nk_vec2(100, 220), nk_window_get_bounds(ctx))) {
                 nk_layout_row_dynamic(ctx, 25, 1);
-                for (int i = 0; i < NODE_TYPE_COUNT; i++)
+                if (nodedit->selected_id)
                 {
-                    if (nk_contextual_item_label(ctx, infos[i].name, NK_TEXT_CENTERED))
+                    if (nk_contextual_item_label(ctx, "delete", NK_TEXT_CENTERED))
                     {
-                        struct nk_rect b = nk_layout_widget_bounds(ctx);
-                        node_editor_add(nodedit, (node_type)i, b.x + nodedit->scrolling.x, 
-                            b.y + nodedit->scrolling.y);
+                        node_editor_delete(nodedit, nodedit->selected_id);
                     }
                 }
+                else
+                {
+                    for (int i = 0; i < NODE_TYPE_COUNT; i++)
+                    {
+                        if (nk_contextual_item_label(ctx, infos[i].name, NK_TEXT_CENTERED))
+                        {
+                            struct nk_rect b = nk_layout_widget_bounds(ctx);
+                            node_editor_add(nodedit, (node_type)i, b.x + nodedit->scrolling.x,
+                                b.y + nodedit->scrolling.y);
+                        }
+                    }
+                }
+                if (nk_input_is_mouse_down(in, NK_BUTTON_MIDDLE))
+                    nk_contextual_close(ctx);
                 nk_contextual_end(ctx);
             }
         }
