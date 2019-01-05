@@ -4,23 +4,27 @@
 
 #define NODE_WIDTH 180.0f
 
+enum link_type { LINK_INBOUND, LINK_OUTBOUND };
 enum node_mark { MARK_NONE, MARK_TEMPORARY, MARK_PERMAMENT };
 
-struct node {
-    int ID;
-    node_type type;
-    struct nk_rect bounds;
-    float constant_inputs[MAX_INPUTS]; // NaN means not constant
-    enum node_mark mark; // needed for topological search
+struct node_link {
+    enum link_type type;
+    int slot;
+    int other_id;
+    int other_slot;
 };
 
-struct node_link {
-    int input_id;
-    int input_slot;
-    int output_id;
-    int output_slot;
-    struct nk_vec2 in;
-    struct nk_vec2 out;
+struct node_link_list {
+    size_t size, capacity;
+    struct node_link *links;
+};
+
+struct node {
+    node_type type;
+    struct nk_rect bounds;
+    struct node_link_list links;
+    float constant_inputs[MAX_INPUTS];
+    enum node_mark mark; // needed for topological search
 };
 
 struct node_linking {
@@ -30,12 +34,9 @@ struct node_linking {
 };
 
 struct node_editor {
-    int IDs;
     struct node_info *infos;
     struct node *nodes;
-    struct node_link *links;
     size_t node_count, nodes_capacity;
-    size_t link_count, links_capacity;
     struct nk_rect bounds;
     int selected_id;
     struct nk_vec2 scrolling;
@@ -87,15 +88,36 @@ is_hovering_curve(float mx, float my, float ax, float ay, float c1x, float c1y,
     return 0;
 }
 
-static struct node*
-node_editor_find(struct node_editor *editor, int ID)
+static inline void 
+add_link(struct node_link_list *list, enum link_type type, int slot, int other_id, 
+    int other_slot)
 {
-    for (int i = 0; i < editor->node_count; i++)
+    if (list->size == list->capacity)
     {
-        if (editor->nodes[i].ID == ID)
-            return &editor->nodes[i];
+        size_t new_capacity = list->capacity ? 2 * list->capacity : 5;
+        list->links = realloc(list->links, new_capacity * sizeof(struct node_link));
+        list->capacity = new_capacity;
     }
-    return NULL;
+    struct node_link link;
+    link.type = type;
+    link.slot = slot;
+    link.other_id = other_id;
+    link.other_slot = other_slot;
+    list->links[list->size++] = link;
+}
+
+static inline void
+remove_link(struct node_link_list *list, int i)
+{
+    NK_ASSERT(i >= 0 && i < list->size);
+    list->links[i] = list->links[--list->size];
+}
+
+static inline struct node_link*
+get_link(struct node_link_list *list, int i)
+{
+    NK_ASSERT(i >= 0 && i < list->size);
+    return &list->links[i];
 }
 
 static void
@@ -111,7 +133,6 @@ node_editor_add(struct node_editor *editor, node_type type, float pos_x, float p
     }
     node = &editor->nodes[editor->node_count++];
     memset(node, 0, sizeof *node);
-    node->ID = editor->IDs++;
     node->type = type;
     node->bounds = nk_rect(pos_x, pos_y, NODE_WIDTH, 30 * 
         max(infos[type].input_count, infos[type].output_count) + 35);
@@ -120,61 +141,84 @@ node_editor_add(struct node_editor *editor, node_type type, float pos_x, float p
 static void 
 node_editor_delete(struct node_editor *editor, int node_id)
 {
-    int i = (int)(node_editor_find(editor, node_id) - editor->nodes);
-    editor->nodes[i] = editor->nodes[--editor->node_count];
-    for (i = 0; i < editor->link_count;)
-    {
-        struct node_link *link = &editor->links[i];
-        if (link->input_id == node_id || link->output_id == node_id)
-            editor->links[i] = editor->links[--editor->link_count];
-        else i++;
-    }
-}
+    struct node *node = &editor->nodes[node_id];
 
-static int
-node_editor_find_link_by_output(struct node_editor *editor, int out_id, int out_slot)
-{
-    for (int i = 0; i < editor->link_count; i++)
+    /* remove all links to node */
+    for (int i = 0; i < node->links.size; ++i)
     {
-        if (editor->links[i].output_id == out_id && editor->links[i].output_slot == out_slot)
-            return i;
+        struct node_link *link = get_link(&node->links, i);
+        struct node_link_list *links = &editor->nodes[link->other_id].links;
+        for (int i = 0; i < links->size;)
+        {
+            if (get_link(links, i)->other_id == node_id) remove_link(links, i);
+            else ++i;
+        }
     }
-    return -1;
+
+    free(node->links.links);
+
+    *node = editor->nodes[--editor->node_count];
+
+    if (node_id != editor->node_count)
+    {
+        /* patch all links to the node that was placed to node_id index */
+        for (int i = 0; i < node->links.size; ++i)
+        {
+            struct node_link *link = get_link(&node->links, i);
+            struct node_link_list *links = &editor->nodes[link->other_id].links;
+            for (int i = 0; i < links->size; ++i)
+            {
+                struct node_link *link = get_link(links, i);
+                if (link->other_id == editor->node_count) link->other_id = node_id;
+            }
+        }
+    }
 }
 
 static void
 node_editor_link(struct node_editor *editor, int in_id, int in_slot,
     int out_id, int out_slot)
 {
-    struct node_link *link;
-    if (editor->link_count == editor->links_capacity)
-    {
-        size_t new_capacity = editor->links_capacity ? 2 * editor->links_capacity : 30;
-        editor->links = realloc(editor->links, new_capacity * sizeof(struct node_link));
-        editor->links_capacity = new_capacity;
-    }
-    link = &editor->links[editor->link_count++];
-    link->input_id = in_id;
-    link->input_slot = in_slot;
-    link->output_id = out_id;
-    link->output_slot = out_slot;
-    node_editor_find(editor, out_id)->constant_inputs[out_slot] = NAN;
+    add_link(&editor->nodes[in_id].links, LINK_OUTBOUND, in_slot, out_id, out_slot);
+    add_link(&editor->nodes[out_id].links, LINK_INBOUND, out_slot, in_id, in_slot);
 }
 
 static void
-node_editor_unlink(struct node_editor *editor, int idx)
+node_editor_unlink(struct node_editor *editor, int in_id, int in_slot,
+    int out_id, int out_slot)
 {
-    int out_id = editor->links[idx].output_id;
-    int out_slot = editor->links[idx].output_slot;
-    node_editor_find(editor, out_id)->constant_inputs[out_slot] = 0;
-    editor->links[idx] = editor->links[--editor->link_count];
+    struct node_link_list *links;
+
+    links = &editor->nodes[in_id].links;
+    for (int i = 0; i < links->size; ++i)
+    {
+        struct node_link *l = get_link(links, i);
+        if (l->type == LINK_OUTBOUND && l->slot == in_slot &&
+            l->other_id == out_id && l->other_slot == out_slot)
+        {
+            remove_link(links, i);
+            break;
+        }
+    }
+
+    links = &editor->nodes[out_id].links;
+    for (int i = 0; i < links->size; ++i)
+    {
+        struct node_link *l = get_link(links, i);
+        if (l->type == LINK_INBOUND && l->slot == out_slot &&
+            l->other_id == in_id && l->other_slot == in_slot)
+        {
+            remove_link(links, i);
+            break;
+        }
+    }
 }
 
 static void
 node_editor_init(struct node_editor *editor)
 {
     memset(editor, 0, sizeof(*editor));
-    editor->IDs = 1;
+    editor->selected_id = -1;
     editor->infos = fill_infos();
     node_editor_add(editor, NODE_SUM, 40, 10);
 }
@@ -182,9 +226,24 @@ node_editor_init(struct node_editor *editor)
 static void
 node_editor_cleanup(struct node_editor *editor)
 {
-    free(editor->infos);
+    for (int i = 0; i < editor->node_count; ++i)
+        if (editor->nodes[i].links.links)
+            free(editor->nodes[i].links.links);
     free(editor->nodes);
-    free(editor->links);
+    free(editor->infos);
+}
+
+static struct node_link*
+find_node_input(struct node *node, int slot)
+{
+    struct node_link *link = NULL;
+    for (int i = 0; i < node->links.size; ++i)
+    {
+        link = get_link(&node->links, i);
+        if (link->type == LINK_INBOUND && link->slot == slot) break;
+        link = NULL;
+    }
+    return link;
 }
 
 static struct compiled_graph* node_editor_compile(struct node_editor *editor);
@@ -248,8 +307,8 @@ node_editor(struct nk_context *ctx, struct node_editor *nodedit, struct nk_rect 
                     {
                         if (i < info.input_count)
                         {
-                            if (isnan(it->constant_inputs[i])) nk_label(ctx, info.inputs[i].name, NK_TEXT_ALIGN_LEFT | NK_TEXT_ALIGN_MIDDLE);
-                            else it->constant_inputs[i] = nk_propertyf(ctx, info.inputs[i].name, -INFINITY, it->constant_inputs[i], INFINITY, 0.01f, 1);
+                            if (find_node_input(it, i)) nk_label(ctx, info.inputs[i].name, NK_TEXT_ALIGN_LEFT | NK_TEXT_ALIGN_MIDDLE);
+                            else it->constant_inputs[i] = nk_propertyf(ctx, info.inputs[i].name, -INFINITY, it->constant_inputs[i], INFINITY, 1, 1);
                         }
                         else
                             nk_label(ctx, "", 0);
@@ -283,12 +342,12 @@ node_editor(struct nk_context *ctx, struct node_editor *nodedit, struct nk_rect 
                         /* start linking process */
                         if (nk_input_has_mouse_click_down_in_rect(in, NK_BUTTON_LEFT, circle, nk_true)) {
                             nodedit->linking.active = nk_true;
-                            nodedit->linking.input_id = it->ID;
+                            nodedit->linking.input_id = i;
                             nodedit->linking.input_slot = n;
                         }
 
                         /* draw curve from linked node slot to mouse position */
-                        if (nodedit->linking.active && nodedit->linking.input_id == it->ID &&
+                        if (nodedit->linking.active && nodedit->linking.input_id == i &&
                             nodedit->linking.input_slot == n) {
                             struct nk_vec2 l0 = nk_vec2(circle.x + 3, circle.y + 3);
                             struct nk_vec2 l1 = in->mouse.pos;
@@ -307,26 +366,46 @@ node_editor(struct nk_context *ctx, struct node_editor *nodedit, struct nk_rect 
                         nk_fill_circle(canvas, circle, nk_rgb(100, 100, 100));
                         if (nk_input_is_mouse_hovering_rect(in, circle))
                         {
-                            if (nk_input_is_mouse_released(in, NK_BUTTON_LEFT) &&
-                                node_editor_find_link_by_output(nodedit, it->ID, n) == -1 &&
-                                nodedit->linking.active && nodedit->linking.input_id != it->ID) {
+                            struct node_link *link = find_node_input(it, n);
+                            if (nk_input_is_mouse_released(in, NK_BUTTON_LEFT) && !link &&
+                                nodedit->linking.active && nodedit->linking.input_id != i) {
                                 nodedit->linking.active = nk_false;
                                 node_editor_link(nodedit, nodedit->linking.input_id,
-                                    nodedit->linking.input_slot, it->ID, n);
+                                    nodedit->linking.input_slot, i, n);
                             }
-                            if (nk_input_is_mouse_pressed(in, NK_BUTTON_LEFT) &&
+                            if (nk_input_is_mouse_pressed(in, NK_BUTTON_LEFT) && link &&
                                 !nodedit->linking.active) {
-                                int i = node_editor_find_link_by_output(nodedit, it->ID, n);
-                                if (i != -1)
-                                {
-                                    struct node_link link = nodedit->links[i];
-                                    node_editor_unlink(nodedit, i);
-                                    nodedit->linking.active = nk_true;
-                                    nodedit->linking.input_id = link.input_id;
-                                    nodedit->linking.input_slot = link.input_slot;
-                                }
+                                nodedit->linking.active = nk_true;
+                                nodedit->linking.input_id = link->other_id;
+                                nodedit->linking.input_slot = link->other_slot;
+                                node_editor_unlink(nodedit, link->other_id, link->other_slot,
+                                    i, link->slot);
                             }
                         }
+                    }
+                }
+                {
+                    /* draw node output links */
+                    for (int i = 0; i < it->links.size; ++i) {
+                        if (get_link(&it->links, i)->type == LINK_INBOUND)
+                            continue;
+                        struct node_link *link = get_link(&it->links, i);
+                        struct node *ni = it;
+                        struct node *no = &nodedit->nodes[link->other_id];
+                        float spacei = 29;
+                        float spaceo = 29;
+                        struct nk_vec2 l0 = nk_layout_space_to_screen(ctx,
+                            nk_vec2(ni->bounds.x + ni->bounds.w, 3.0f + ni->bounds.y + spacei * (float)(link->slot) + 43));
+                        struct nk_vec2 l1 = nk_layout_space_to_screen(ctx,
+                            nk_vec2(no->bounds.x, 3.0f + no->bounds.y + spaceo * (float)(link->other_slot) + 43));
+
+                        l0.x -= nodedit->scrolling.x;
+                        l0.y -= nodedit->scrolling.y;
+                        l1.x -= nodedit->scrolling.x;
+                        l1.y -= nodedit->scrolling.y;
+
+                        nk_stroke_curve(canvas, l0.x, l0.y, l0.x + 50.0f, l0.y,
+                            l1.x - 50.0f, l1.y, l1.x, l1.y, 1.0f, nk_rgb(100, 100, 100));
                     }
                 }
             }
@@ -336,37 +415,17 @@ node_editor(struct nk_context *ctx, struct node_editor *nodedit, struct nk_rect 
                 nodedit->linking.active = nk_false;
             }
 
-            /* draw each link */
-            for (n = 0; n < nodedit->link_count; ++n) {
-                struct node_link *link = &nodedit->links[n];
-                struct node *ni = node_editor_find(nodedit, link->input_id);
-                struct node *no = node_editor_find(nodedit, link->output_id);
-                float spacei = 29;
-                float spaceo = 29;
-                struct nk_vec2 l0 = nk_layout_space_to_screen(ctx,
-                    nk_vec2(ni->bounds.x + ni->bounds.w, 3.0f + ni->bounds.y + spacei * (float)(link->input_slot) + 43));
-                struct nk_vec2 l1 = nk_layout_space_to_screen(ctx,
-                    nk_vec2(no->bounds.x, 3.0f + no->bounds.y + spaceo * (float)(link->output_slot) + 43));
-
-                l0.x -= nodedit->scrolling.x;
-                l0.y -= nodedit->scrolling.y;
-                l1.x -= nodedit->scrolling.x;
-                l1.y -= nodedit->scrolling.y;
-
-                nk_stroke_curve(canvas, l0.x, l0.y, l0.x + 50.0f, l0.y,
-                    l1.x - 50.0f, l1.y, l1.x, l1.y, 1.0f, nk_rgb(100, 100, 100));
-            }
-
+            /* TODO */
             if (updated != -1) {
                 /* reshuffle nodes to have least recently selected node on top */
-                struct node temp = nodedit->nodes[nodedit->node_count - 1];
+                /*struct node temp = nodedit->nodes[nodedit->node_count - 1];
                 nodedit->nodes[nodedit->node_count - 1] = nodedit->nodes[updated];
-                nodedit->nodes[updated] = temp;
+                nodedit->nodes[updated] = temp;*/
             }
 
             /* node selection */
             if (nk_input_mouse_clicked(in, NK_BUTTON_LEFT|NK_BUTTON_RIGHT, nk_layout_space_bounds(ctx))) {
-                nodedit->selected_id = 0;
+                nodedit->selected_id = -1;
                 nodedit->bounds = nk_rect(in->mouse.pos.x, in->mouse.pos.y, 100, 200);
                 for (int i = 0; i < nodedit->node_count; i++) {
                     it = &nodedit->nodes[i];
@@ -374,14 +433,14 @@ node_editor(struct nk_context *ctx, struct node_editor *nodedit, struct nk_rect 
                     b.x -= nodedit->scrolling.x;
                     b.y -= nodedit->scrolling.y;
                     if (nk_input_is_mouse_hovering_rect(in, b))
-                        nodedit->selected_id = it->ID;
+                        nodedit->selected_id = i;
                 }
             }
 
             /* contextual menu */
             if (nk_contextual_begin(ctx, 0, nk_vec2(100, 220), nk_window_get_bounds(ctx))) {
                 nk_layout_row_dynamic(ctx, 25, 1);
-                if (nodedit->selected_id)
+                if (nodedit->selected_id != -1)
                 {
                     if (nk_contextual_item_label(ctx, "delete", NK_TEXT_CENTERED))
                     {
@@ -392,8 +451,8 @@ node_editor(struct nk_context *ctx, struct node_editor *nodedit, struct nk_rect 
                 {
                     if (nk_contextual_item_label(ctx, "_compile_", NK_TEXT_CENTERED))
                     {
-                        struct compiled_graph *result = node_editor_compile(nodedit);
-                        free(result);
+                        /*struct compiled_graph *result = node_editor_compile(nodedit);
+                        free(result);*/
                     }
                     for (int i = 0; i < NODE_TYPE_COUNT; i++)
                     {
@@ -423,6 +482,8 @@ node_editor(struct nk_context *ctx, struct node_editor *nodedit, struct nk_rect 
     return !nk_window_is_closed(ctx, "NodeEdit");
 }
 
+/* TODO */
+#if 0
 static struct compiled_graph*
 node_editor_compile(struct node_editor *editor)
 {
@@ -617,3 +678,5 @@ node_editor_compile(struct node_editor *editor)
 #undef PAD_TO_ALIGN
     }
 }
+
+#endif
