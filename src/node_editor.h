@@ -187,6 +187,8 @@ node_editor_cleanup(struct node_editor *editor)
     free(editor->links);
 }
 
+static struct compiled_graph* node_editor_compile(struct node_editor *editor);
+
 static int
 node_editor(struct nk_context *ctx, struct node_editor *nodedit, struct nk_rect win_size, 
     nk_flags flags)
@@ -388,6 +390,11 @@ node_editor(struct nk_context *ctx, struct node_editor *nodedit, struct nk_rect 
                 }
                 else
                 {
+                    if (nk_contextual_item_label(ctx, "_compile_", NK_TEXT_CENTERED))
+                    {
+                        struct compiled_graph *result = node_editor_compile(nodedit);
+                        free(result);
+                    }
                     for (int i = 0; i < NODE_TYPE_COUNT; i++)
                     {
                         if (nk_contextual_item_label(ctx, infos[i].name, NK_TEXT_CENTERED))
@@ -448,7 +455,7 @@ node_editor_compile(struct node_editor *editor)
 
             while (stack_size)
             {
-                n = stack[stack_size];
+                n = stack[stack_size - 1];
 
                 for (int i = 0; i < unmarked_count; ++i)
                 {
@@ -468,7 +475,9 @@ node_editor_compile(struct node_editor *editor)
                     if (l->input_id == n->ID)
                     {
                         struct node *c = node_editor_find(editor, l->output_id);
-                        if (c->mark != MARK_NONE)
+                        /* if c->mark == MARK_TEMPORARY then the graph is not acyclic */
+                        NK_ASSERT(c->mark != MARK_TEMPORARY);
+                        if (c->mark == MARK_NONE)
                         {
                             next = c;
                             break;
@@ -492,12 +501,11 @@ node_editor_compile(struct node_editor *editor)
         free(stack);
         free(unmarked);
 
-        int h = sorted_count / 2;
-        for (int i = 0; i < h; ++i)
+        for (int i = 0; i < sorted_count / 2; ++i)
         {
             struct node *temp = sorted[i];
-            sorted[i] = sorted[i + h];
-            sorted[i + h] = temp;
+            sorted[i] = sorted[sorted_count - i - 1];
+            sorted[sorted_count - i - 1] = temp;
         }
     }
 
@@ -530,25 +538,41 @@ node_editor_compile(struct node_editor *editor)
         /* write constant inputs, remember offsets */
         data = malloc(pos);
         memset(data, 0, pos);
+        ((struct compiled_graph*)data)->size = pos;
         pos = 0;
-        size_t *offsets = malloc(editor->node_count * sizeof(struct node_base*));
+        size_t *offsets = malloc(editor->node_count * sizeof *offsets);
 
         pos += sizeof(struct compiled_graph);
         PAD_TO_ALIGN(pos, align);
         for (int i = 0; i < editor->node_count; ++i)
         {
             struct node *n = sorted[i];
+            struct node_info *info = &infos[n->type];
+            size_t input_offsets[MAX_INPUTS];
 
-            for (int j = 0; j < infos[n->type].input_count; ++j)
+            for (int j = 0; j < info->input_count; ++j)
+            {
                 if (!isnan(n->constant_inputs[j]))
                 {
                     *((float*)(data + pos)) = n->constant_inputs[j];
+                    input_offsets[j] = pos;
                     pos += sizeof(float);
                 }
+            }
 
             PAD_TO_ALIGN(pos, align);
 
             offsets[i] = pos;
+            ((struct node_base*)(data + pos))->type = n->type;
+
+            for (int j = 0; j < info->input_count; ++j)
+            {
+                if (!isnan(n->constant_inputs[j]))
+                {
+                    *((float**)(data + pos + info->inputs[j].offset)) = input_offsets[j];
+                }
+            }
+
             pos += infos[n->type].size;
 
             PAD_TO_ALIGN(pos, align);
@@ -563,26 +587,26 @@ node_editor_compile(struct node_editor *editor)
         for (int i = 0; i < editor->link_count; ++i)
         {
             struct node_link *link = &editor->links[i];
-            struct node_base *in = 0, *out = 0;
+            size_t in = 0, out = 0;
 
             for (int i = 0; i < editor->node_count; ++i)
             {
+                node_type type = ((struct node_base*)(data + offsets[i]))->type;
                 if (sorted[i]->ID == link->input_id)
                 {
-                    in = (struct node_base*)(data + offsets[i]);
+                    in = offsets[i] + infos[type].outputs[link->input_slot].offset;
                     if (out) break;
                 }
-                if (sorted[i]->ID == link->input_id)
+                if (sorted[i]->ID == link->output_id)
                 {
-                    out = (struct node_base*)(data + offsets[i]);
+                    out = offsets[i] + infos[type].inputs[link->output_slot].offset;
                     if (in) break;
                 }
             }
 
             NK_ASSERT(in && out);
 
-            *((float**)((size_t)out + infos[out->type].inputs[link->output_slot].offset)) =
-                (float*)((size_t)in - (size_t)data + infos[in->type].outputs[link->input_slot].offset);
+            *((float**)(data + out)) = (float*)(in);
         }
 
         free(offsets);
