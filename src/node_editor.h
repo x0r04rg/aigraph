@@ -23,6 +23,7 @@ struct node {
     node_type type;
     struct nk_rect bounds;
     struct node_link_list links;
+    char field_names[10][MAX_INPUTS];
     float constant_inputs[MAX_INPUTS];
     enum node_mark mark; // needed for topological search
 };
@@ -123,7 +124,7 @@ get_link(struct node_link_list *list, int i)
 static void
 node_editor_add(struct node_editor *editor, node_type type, float pos_x, float pos_y)
 {
-    struct node_info *infos = editor->infos;
+    struct node_info *info = &editor->infos[type];
     struct node *node;
     if (editor->node_count == editor->nodes_capacity)
     {
@@ -135,7 +136,9 @@ node_editor_add(struct node_editor *editor, node_type type, float pos_x, float p
     memset(node, 0, sizeof *node);
     node->type = type;
     node->bounds = nk_rect(pos_x, pos_y, NODE_WIDTH, 30 * 
-        max(infos[type].input_count, infos[type].output_count) + 35);
+        max(info->input_count, info->output_count) + 35);
+    for (int i = 0; i < info->input_count; i++)
+        sprintf_s(node->field_names[i], 10, "#%s", info->inputs[i].name);
 }
 
 static void 
@@ -308,7 +311,7 @@ node_editor(struct nk_context *ctx, struct node_editor *nodedit, struct nk_rect 
                         if (i < info.input_count)
                         {
                             if (find_node_input(it, i)) nk_label(ctx, info.inputs[i].name, NK_TEXT_ALIGN_LEFT | NK_TEXT_ALIGN_MIDDLE);
-                            else it->constant_inputs[i] = nk_propertyf(ctx, info.inputs[i].name, -INFINITY, it->constant_inputs[i], INFINITY, 1, 1);
+                            else it->constant_inputs[i] = nk_propertyf(ctx, it->field_names[i], -INFINITY, it->constant_inputs[i], INFINITY, 1, 1);
                         }
                         else
                             nk_label(ctx, "", 0);
