@@ -373,6 +373,10 @@ node_editor(struct nk_context *ctx, struct node_editor *nodedit, struct nk_rect 
                                 nodedit->linking.active = nk_false;
                                 node_editor_link(nodedit, nodedit->linking.input_id,
                                     nodedit->linking.input_slot, i, n);
+                                /* if link creates a cycle, remove it */
+                                if (!tsort(nodedit->nodes, nodedit->node_count, NULL))
+                                    node_editor_unlink(nodedit, nodedit->linking.input_id,
+                                        nodedit->linking.input_slot, i, n);
                             }
                             if (nk_input_is_mouse_pressed(in, NK_BUTTON_LEFT) && link &&
                                 !nodedit->linking.active) {
@@ -483,84 +487,87 @@ node_editor(struct nk_context *ctx, struct node_editor *nodedit, struct nk_rect 
     return !nk_window_is_closed(ctx, "NodeEdit");
 }
 
-static struct compiled_graph*
-node_editor_compile(struct node_editor *editor)
+/* depth-first topological sort */
+static int 
+tsort(struct node *nodes, int node_count, struct node **sorted)
 {
-    struct node **sorted = malloc(editor->node_count * sizeof(struct node*));
-
-    /* depth-first topological sort */
+    struct stack_frame
     {
-        size_t sorted_count = 0;
+        struct node *node;
+        int loop_counter;
+    };
 
-        struct node **unmarked = malloc(editor->node_count * sizeof(struct node*));
-        size_t unmarked_count = 0;
+    int result = nk_true;
 
-        struct node **stack = malloc(editor->node_count * sizeof(struct node*));
-        size_t stack_size = 0, stack_capacity = editor->node_count;
+    int sorted_count = 0;
 
-        for (int i = 0; i < editor->node_count; i++)
+    struct node **unmarked = malloc(node_count * sizeof *unmarked);
+    int unmarked_count = 0;
+
+    struct stack_frame *stack = malloc(node_count * sizeof *stack);
+    int stack_size = 0;
+
+    for (int i = 0; i < node_count; i++)
+    {
+        nodes[i].mark = MARK_NONE;
+        unmarked[i] = &nodes[i];
+    }
+
+    unmarked_count = node_count;
+
+    while (unmarked_count)
+    {
+        struct node *n = unmarked[0];
+
+        stack[stack_size++] = (struct stack_frame) { n, 0 };
+
+        while (stack_size)
         {
-            editor->nodes[i].mark = MARK_NONE;
-            unmarked[i] = &editor->nodes[i];
-        }
+            struct stack_frame *s = &stack[stack_size - 1];
+            n = s->node;
 
-        unmarked_count = editor->node_count;
-
-        while (unmarked_count)
-        {
-            struct node *n = unmarked[0];
-
-            NK_ASSERT(stack_size <= stack_capacity);
-            stack[stack_size++] = n;
-
-            while (stack_size)
+            if (n->mark == MARK_NONE)
             {
-                n = stack[stack_size - 1];
-
-                if (n->mark == MARK_NONE)
+                for (int i = 0; i < unmarked_count; ++i)
                 {
-                    for (int i = 0; i < unmarked_count; ++i)
+                    if (unmarked[i] == n)
                     {
-                        if (unmarked[i] == n)
-                        {
-                            unmarked[i] = unmarked[--unmarked_count];
-                            break;
-                        }
+                        unmarked[i] = unmarked[--unmarked_count];
+                        break;
                     }
                 }
 
                 n->mark = MARK_TEMPORARY;
-
-                struct node *next = NULL;
-                for (int i = 0; i < n->links.size; ++i)
-                {
-                    struct node_link *l = get_link(&n->links, i);
-                    if (l->type == LINK_OUTBOUND)
-                    {
-                        next = &editor->nodes[l->other_id];
-                        /* if next->mark == MARK_TEMPORARY then the graph is not acyclic */
-                        NK_ASSERT(next->mark != MARK_TEMPORARY);
-                        if (next->mark == MARK_NONE) break;
-                        next = NULL;
-                    }
-                }
-
-                if (next)
-                {
-                    NK_ASSERT(stack_size <= stack_capacity);
-                    stack[stack_size++] = next;
-                    continue;
-                }
-
-                n->mark = MARK_PERMAMENT;
-                sorted[sorted_count++] = n;
-                --stack_size;
             }
+
+            struct node *next = NULL;
+            for (int i = s->loop_counter; i < n->links.size; ++i)
+            {
+                struct node_link *l = get_link(&n->links, i);
+                if (l->type == LINK_OUTBOUND)
+                {
+                    next = &nodes[l->other_id];
+                    /* if next->mark == MARK_TEMPORARY then the graph is not acyclic */
+                    if (next->mark == MARK_TEMPORARY) { result = nk_false; goto cleanup; }
+                    if (next->mark == MARK_NONE) { s->loop_counter = i + 1; break; }
+                    next = NULL;
+                }
+            }
+
+            if (next)
+            {
+                stack[stack_size++] = (struct stack_frame) { next, 0 };
+                continue;
+            }
+
+            n->mark = MARK_PERMAMENT;
+            if (sorted) sorted[sorted_count++] = n;
+            --stack_size;
         }
+    }
 
-        free(stack);
-        free(unmarked);
-
+    if (sorted)
+    {
         for (int i = 0; i < sorted_count / 2; ++i)
         {
             struct node *temp = sorted[i];
@@ -568,6 +575,21 @@ node_editor_compile(struct node_editor *editor)
             sorted[sorted_count - i - 1] = temp;
         }
     }
+
+    cleanup:
+    free(stack);
+    free(unmarked);
+
+    return result;
+}
+
+static struct compiled_graph*
+node_editor_compile(struct node_editor *editor)
+{
+    struct node **sorted = malloc(editor->node_count * sizeof(struct node*));
+
+    int tsort_success = tsort(editor->nodes, editor->node_count, sorted);
+    NK_ASSERT(tsort_success);
 
     /* compile graph into binary blob */
     {
