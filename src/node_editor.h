@@ -239,14 +239,12 @@ node_editor_cleanup(struct node_editor *editor)
 static struct node_link*
 find_node_input(struct node *node, int slot)
 {
-    struct node_link *link = NULL;
     for (int i = 0; i < node->links.size; ++i)
     {
-        link = get_link(&node->links, i);
-        if (link->type == LINK_INBOUND && link->slot == slot) break;
-        link = NULL;
+        struct node_link *link = get_link(&node->links, i);
+        if (link->type == LINK_INBOUND && link->slot == slot) return link;
     }
-    return link;
+    return NULL;
 }
 
 static struct compiled_graph* node_editor_compile(struct node_editor *editor);
@@ -454,8 +452,8 @@ node_editor(struct nk_context *ctx, struct node_editor *nodedit, struct nk_rect 
                 {
                     if (nk_contextual_item_label(ctx, "_compile_", NK_TEXT_CENTERED))
                     {
-                        /*struct compiled_graph *result = node_editor_compile(nodedit);
-                        free(result);*/
+                        struct compiled_graph *result = node_editor_compile(nodedit);
+                        free(result);
                     }
                     for (int i = 0; i < NODE_TYPE_COUNT; i++)
                     {
@@ -485,8 +483,6 @@ node_editor(struct nk_context *ctx, struct node_editor *nodedit, struct nk_rect 
     return !nk_window_is_closed(ctx, "NodeEdit");
 }
 
-/* TODO */
-#if 0
 static struct compiled_graph*
 node_editor_compile(struct node_editor *editor)
 {
@@ -521,31 +517,31 @@ node_editor_compile(struct node_editor *editor)
             {
                 n = stack[stack_size - 1];
 
-                for (int i = 0; i < unmarked_count; ++i)
+                if (n->mark == MARK_NONE)
                 {
-                    if (unmarked[i] == n)
+                    for (int i = 0; i < unmarked_count; ++i)
                     {
-                        unmarked[i] = unmarked[--unmarked_count];
-                        break;
+                        if (unmarked[i] == n)
+                        {
+                            unmarked[i] = unmarked[--unmarked_count];
+                            break;
+                        }
                     }
                 }
 
                 n->mark = MARK_TEMPORARY;
 
                 struct node *next = NULL;
-                for (int i = 0; i < editor->link_count; ++i)
+                for (int i = 0; i < n->links.size; ++i)
                 {
-                    struct node_link *l = &editor->links[i];
-                    if (l->input_id == n->ID)
+                    struct node_link *l = get_link(&n->links, i);
+                    if (l->type == LINK_OUTBOUND)
                     {
-                        struct node *c = node_editor_find(editor, l->output_id);
-                        /* if c->mark == MARK_TEMPORARY then the graph is not acyclic */
-                        NK_ASSERT(c->mark != MARK_TEMPORARY);
-                        if (c->mark == MARK_NONE)
-                        {
-                            next = c;
-                            break;
-                        }
+                        next = &editor->nodes[l->other_id];
+                        /* if next->mark == MARK_TEMPORARY then the graph is not acyclic */
+                        NK_ASSERT(next->mark != MARK_TEMPORARY);
+                        if (next->mark == MARK_NONE) break;
+                        next = NULL;
                     }
                 }
 
@@ -590,7 +586,7 @@ node_editor_compile(struct node_editor *editor)
             struct node *n = sorted[i];
 
             for (int j = 0; j < infos[n->type].input_count; j++)
-                if (!isnan(n->constant_inputs[j])) pos += sizeof(float);
+                if (!find_node_input(n, j)) pos += sizeof(float);
 
             PAD_TO_ALIGN(pos, align);
 
@@ -616,12 +612,14 @@ node_editor_compile(struct node_editor *editor)
 
             for (int j = 0; j < info->input_count; ++j)
             {
-                if (!isnan(n->constant_inputs[j]))
+                if (!find_node_input(n, j))
                 {
                     *((float*)(data + pos)) = n->constant_inputs[j];
                     input_offsets[j] = pos;
                     pos += sizeof(float);
                 }
+                else
+                    input_offsets[j] = 0;
             }
 
             PAD_TO_ALIGN(pos, align);
@@ -631,7 +629,7 @@ node_editor_compile(struct node_editor *editor)
 
             for (int j = 0; j < info->input_count; ++j)
             {
-                if (!isnan(n->constant_inputs[j]))
+                if (input_offsets[j])
                 {
                     *((float**)(data + pos + info->inputs[j].offset)) = input_offsets[j];
                 }
@@ -647,30 +645,41 @@ node_editor_compile(struct node_editor *editor)
         for (int i = 0; i < editor->node_count - 1; ++i)
             ((struct node_base*)(data + offsets[i]))->next = (struct node_base*)offsets[i + 1];
 
-        /* write input offsets */
-        for (int i = 0; i < editor->link_count; ++i)
         {
-            struct node_link *link = &editor->links[i];
-            size_t in = 0, out = 0;
-
+            /* index in sorted array by id */
+            int *srt = malloc(editor->node_count * sizeof *srt);
             for (int i = 0; i < editor->node_count; ++i)
             {
-                node_type type = ((struct node_base*)(data + offsets[i]))->type;
-                if (sorted[i]->ID == link->input_id)
+                for (int j = 0; j < editor->node_count; ++j)
                 {
-                    in = offsets[i] + infos[type].outputs[link->input_slot].offset;
-                    if (out) break;
-                }
-                if (sorted[i]->ID == link->output_id)
-                {
-                    out = offsets[i] + infos[type].inputs[link->output_slot].offset;
-                    if (in) break;
+                    if (sorted[j] == &editor->nodes[i])
+                    {
+                        srt[i] = j;
+                        break;
+                    }
                 }
             }
 
-            NK_ASSERT(in && out);
+            /* write input offsets */
+            for (int i = 0; i < editor->node_count; ++i)
+            {
+                struct node *n = sorted[i];
+                for (int j = 0; j < n->links.size; ++j)
+                {
+                    struct node_link *link = get_link(&n->links, j);
+                    if (link->type == LINK_INBOUND)
+                    {
+                        struct node *o = &editor->nodes[link->other_id];
+                        int o_idx = srt[link->other_id];
+                        size_t in_offset = offsets[i] + infos[n->type].inputs[link->slot].offset;
+                        size_t out_offset = offsets[o_idx] + infos[o->type].outputs[link->other_slot].offset;
 
-            *((float**)(data + out)) = (float*)(in);
+                        *((float**)(data + in_offset)) = (float*)(out_offset);
+                    }
+                }
+            }
+
+            free(srt);
         }
 
         free(offsets);
@@ -681,5 +690,3 @@ node_editor_compile(struct node_editor *editor)
 #undef PAD_TO_ALIGN
     }
 }
-
-#endif
