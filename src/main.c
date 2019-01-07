@@ -32,6 +32,7 @@
 #define MAX_ELEMENT_MEMORY 128 * 1024
 
 #include "node_editor.h"
+#include "console.h"
 
 int main(void)
 {
@@ -46,6 +47,9 @@ int main(void)
     struct nk_colorf bg;
 
     struct node_editor editor;
+    struct console console;
+
+    console_init(&console);
 
     /* SDL setup */
     SDL_SetHint(SDL_HINT_VIDEO_HIGHDPI_DISABLED, "0");
@@ -69,6 +73,12 @@ int main(void)
         fprintf(stderr, "Failed to setup GLEW\n");
         exit(1);
     }
+
+    const char *vendor = (const char *)glGetString(GL_VENDOR);
+    const char *renderer = (const char *)glGetString(GL_RENDERER);
+    const char *version = (const char *)glGetString(GL_VERSION);
+    console_printf(&console, "Renderer: %s (%s)", renderer, vendor);
+    console_printf(&console, "Driver: %s", version);
 
     ctx = nk_sdl_init(win);
     /* Load Fonts: if none of these are loaded a default font will be used  */
@@ -96,19 +106,31 @@ int main(void)
     node_editor_init(&editor);
 
     bg.r = 0.10f, bg.g = 0.18f, bg.b = 0.24f, bg.a = 1.0f;
+    float time = SDL_GetTicks() / 1000.0f;
     while (running)
     {
+        int toggle_console = 0;
+
+        {
+            float new_time = SDL_GetTicks() / 1000.0f;
+            ctx->delta_time_seconds = new_time - time;
+            time = new_time;
+        }
+
         /* Input */
         SDL_Event evt;
         nk_input_begin(ctx);
         while (SDL_PollEvent(&evt)) {
             if (evt.type == SDL_QUIT) goto cleanup;
+            if (evt.type == SDL_KEYDOWN && evt.key.keysym.scancode == SDL_SCANCODE_GRAVE)
+                console.hidden = !console.hidden;
             nk_sdl_handle_event(&evt);
         } nk_input_end(ctx);
 
         SDL_GetWindowSize(win, &win_width, &win_height);
-
-        node_editor(ctx, &editor, nk_rect(0, 0, win_width, win_height), NK_WINDOW_NO_SCROLLBAR);
+        
+        node_editor_gui(ctx, &editor, nk_rect(0, 0, win_width, win_height), NK_WINDOW_NO_SCROLLBAR);
+        console_gui(ctx, &console, &editor, nk_rect(0, 0, win_width, win_height));
 
         /* Draw */
         glViewport(0, 0, win_width, win_height);

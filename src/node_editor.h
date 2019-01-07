@@ -4,11 +4,11 @@
 
 #define NODE_WIDTH 180.0f
 
-enum link_type { LINK_INBOUND, LINK_OUTBOUND };
-enum node_mark { MARK_NONE, MARK_TEMPORARY, MARK_PERMAMENT };
+typedef enum { LINK_INBOUND, LINK_OUTBOUND } link_type;
+typedef enum { MARK_NONE, MARK_TEMPORARY, MARK_PERMAMENT } node_mark;
 
 struct node_link {
-    enum link_type type;
+    link_type type;
     int slot;
     int other_id;
     int other_slot;
@@ -25,7 +25,7 @@ struct node {
     struct node_link_list links;
     char field_names[10][MAX_INPUTS];
     float constant_inputs[MAX_INPUTS];
-    enum node_mark mark; // needed for topological search
+    node_mark mark; // needed for topological search
 };
 
 struct node_linking {
@@ -248,9 +248,10 @@ find_node_input(struct node *node, int slot)
 }
 
 static struct compiled_graph* node_editor_compile(struct node_editor *editor);
+static int tsort(struct node *nodes, int node_count, struct node **sorted);
 
 static int
-node_editor(struct nk_context *ctx, struct node_editor *nodedit, struct nk_rect win_size, 
+node_editor_gui(struct nk_context *ctx, struct node_editor *nodedit, struct nk_rect win_size, 
     nk_flags flags)
 {
     int n = 0;
@@ -260,7 +261,7 @@ node_editor(struct nk_context *ctx, struct node_editor *nodedit, struct nk_rect 
     int updated = -1;
     struct node_info *infos = nodedit->infos;
 
-    if (nk_begin(ctx, "NodeEdit", win_size, flags))
+    if (nk_begin(ctx, "aigraph", win_size, flags))
     {
         /* allocate complete window space */
         canvas = nk_window_get_canvas(ctx);
