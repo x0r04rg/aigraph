@@ -9,7 +9,23 @@ struct console
     int hidden;
 };
 
-static void console_print(struct console *console, char *string);
+static char*
+skip_whitespace(char *src)
+{
+    char *p = src;
+    while (*p == ' ') ++p;
+    return p;
+}
+
+static char* 
+read_word(char *src, char *buf, int buf_size)
+{
+    int i = 0, n = buf_size - 1;
+    char *p = skip_whitespace(src);
+    while (*p != '\0' && *p != ' ' && i < n) buf[i++] = *p++;
+    buf[i] = '\0';
+    return p;
+}
 
 static void
 console_init(struct console *console)
@@ -30,22 +46,50 @@ console_print(struct console *console, char *string)
     console->history[console->history_size++] = _strdup(string);
 }
 
-static void console_printf(struct console *console, char *fmt, ...)
+static void console_printfv(struct console *console, char *fmt, va_list args)
 {
     char buf[INPUT_SIZE];
-    va_list args;
-    va_start(args, fmt);
     _vsnprintf(buf, INPUT_SIZE, fmt, args);
     console_print(console, buf);
+}
+
+static void 
+console_printf(struct console *console, char *fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    console_printfv(console, fmt, args);
     va_end(args); 
 }
 
 static void 
 console_execute(struct console *console, struct node_editor *editor, char *string)
 {
-    if (string && *string != '\0')
+    char word[INPUT_SIZE];
+    char *p = string;
+
+    if (!p) return;
+
+    p = read_word(p, word, NK_LEN(word));
+
+    if (word[0] == '\0') return;
+
+    console_print(console, skip_whitespace(string));
+    if (!strcmp(word, "save"))
     {
-        console_print(console, string);
+        p = skip_whitespace(p);
+        if (*p == '\0')
+        {
+            console_print(console, "error: no arguments given for 'save' command");
+        }
+        else
+        {
+            node_editor_save(editor, p);
+        }
+    }
+    else
+    {
+        console_print(console, "error: invalid command");
     }
 }
 

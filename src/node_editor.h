@@ -34,8 +34,14 @@ struct node_linking {
     int input_slot;
 };
 
+struct print_ops {
+    void(*print)(struct print_ops *ctx, char *string);
+    void(*printfv)(struct print_ops *ctx, char *fmt, va_list args);
+};
+
 struct node_editor {
     struct node_info *infos;
+    struct print_ops *console;
     struct node *nodes;
     size_t node_count, nodes_capacity;
     struct nk_rect bounds;
@@ -119,6 +125,21 @@ get_link(struct node_link_list *list, int i)
 {
     NK_ASSERT(i >= 0 && i < list->size);
     return &list->links[i];
+}
+
+static inline void
+editor_print(struct node_editor *editor, char *string)
+{
+    editor->console->print(editor->console, string);
+}
+
+static inline void
+editor_printf(struct node_editor *editor, char *fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    editor->console->printfv(editor->console, fmt, args);
+    va_end(args);
 }
 
 static void
@@ -218,11 +239,12 @@ node_editor_unlink(struct node_editor *editor, int in_id, int in_slot,
 }
 
 static void
-node_editor_init(struct node_editor *editor)
+node_editor_init(struct node_editor *editor, struct node_info *infos, struct print_ops *console)
 {
     memset(editor, 0, sizeof(*editor));
     editor->selected_id = -1;
-    editor->infos = fill_infos();
+    editor->infos = infos;
+    editor->console = console;
     node_editor_add(editor, NODE_SUM, 40, 10);
 }
 
@@ -590,7 +612,11 @@ node_editor_compile(struct node_editor *editor)
     struct node **sorted = malloc(editor->node_count * sizeof(struct node*));
 
     int tsort_success = tsort(editor->nodes, editor->node_count, sorted);
-    NK_ASSERT(tsort_success);
+    if (!tsort_success)
+    {
+        free(sorted);
+        return NULL;
+    }
 
     /* compile graph into binary blob */
     {
@@ -621,7 +647,7 @@ node_editor_compile(struct node_editor *editor)
         /* write constant inputs, remember offsets */
         data = malloc(pos);
         memset(data, 0, pos);
-        ((struct compiled_graph*)data)->size = pos;
+        ((struct compiled_graph*)data)->size = pos - sizeof(struct compiled_graph);
         pos = 0;
         size_t *offsets = malloc(editor->node_count * sizeof *offsets);
 
@@ -712,4 +738,107 @@ node_editor_compile(struct node_editor *editor)
 
 #undef PAD_TO_ALIGN
     }
+}
+
+static void
+node_editor_save(struct node_editor *editor, char *path)
+{
+    struct compiled_graph *graph = node_editor_compile(editor);
+
+    if (!graph) editor_print(editor, "Warning: compilation failed (file will be saved anyway)");
+
+    SDL_RWops *file = SDL_RWFromFile(path, "w");
+    size_t pos, temp;
+
+    if (!file) { editor_print(editor, SDL_GetError()); return; }
+
+    /* write graph */
+    if (graph)
+    {
+        SDL_RWwrite(file, graph, 1, graph->size + sizeof *graph);
+        free(graph);
+    }
+    else
+    {
+        struct compiled_graph dummy;
+        memset(&dummy, 0, sizeof dummy);
+        SDL_RWwrite(file, &dummy, 1, sizeof dummy);
+    }
+
+    /* write nodes */
+    SDL_WriteLE32(file, editor->node_count);
+    for (int i = 0; i < editor->node_count; ++i)
+    {
+        struct node *n = &editor->nodes[i];
+        SDL_WriteLE16(file, (Uint32)n->type);
+        SDL_WriteLE32(file, *((Uint32*)(&n->bounds.x)));
+        SDL_WriteLE32(file, *((Uint32*)(&n->bounds.y)));
+    }
+
+    /* reserve space for link count */
+    pos = SDL_RWtell(file);
+    SDL_WriteLE32(file, 0);
+
+    /* write links */
+    int link_count = 0;
+    for (int i = 0; i < editor->node_count; ++i)
+    {
+        struct node *n = &editor->nodes[i];
+        for (int j = 0; j < n->links.size; ++j)
+        {
+            struct node_link *link = get_link(&n->links, j);
+            if (link->type == LINK_OUTBOUND)
+            {
+                SDL_WriteLE32(file, i);
+                SDL_WriteLE32(file, link->other_id);
+                SDL_WriteU8(file, (Uint8)link->slot);
+                SDL_WriteU8(file, (Uint8)link->other_slot);
+                ++link_count;
+            }
+        }
+    }
+
+    /* write link count */
+    temp = SDL_RWtell(file);
+    SDL_RWseek(file, pos, RW_SEEK_SET);
+    SDL_WriteLE32(file, link_count);
+    SDL_RWseek(file, temp, RW_SEEK_SET);
+
+    /* reserve space for const input count */
+    pos = SDL_RWtell(file);
+    SDL_WriteLE32(file, 0);
+
+    /* write const inputs */
+    int const_inputs = 0;
+    for (int i = 0; i < editor->node_count; ++i)
+    {
+        struct node *n = &editor->nodes[i];
+        char is_const[MAX_INPUTS];
+        memset(is_const, 1, NK_LEN(is_const));
+        for (int j = 0; j < n->links.size; ++j)
+        {
+            struct node_link *link = get_link(&n->links, j);
+            if (link->type == LINK_INBOUND) is_const[link->slot] = 0;
+        }
+        for (int j = 0; j < editor->infos[n->type].input_count; ++j)
+        {
+            if (is_const[j])
+            {
+                SDL_WriteLE32(file, i);
+                SDL_WriteLE32(file, *((Uint32*)(&n->constant_inputs[j])));
+                SDL_WriteU8(file, (Uint8)j);
+                ++const_inputs;
+            }
+        }
+    }
+
+    /* write const input count */
+    temp = SDL_RWtell(file);
+    SDL_RWseek(file, pos, RW_SEEK_SET);
+    SDL_WriteLE32(file, const_inputs);
+    SDL_RWseek(file, temp, RW_SEEK_SET);
+
+    SDL_RWclose(file);
+
+    editor_printf(editor, "successfully saved into file '%s'", path);
 }

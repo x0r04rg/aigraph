@@ -63,7 +63,7 @@ struct negate
 
 struct compiled_graph
 {
-    size_t size;
+    size_t size; /* size of data after this struct */
     struct node_base *first;
 };
 
