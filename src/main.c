@@ -66,6 +66,7 @@ int main(void)
     struct node_editor editor;
     struct console console;
     struct console_ops conops;
+    struct node_info *infos;
 
     console_init(&console);
 
@@ -107,7 +108,7 @@ int main(void)
     nk_sdl_font_stash_begin(&atlas);
     nk_sdl_font_stash_end();}
 
-    node_editor_init(&editor, fill_infos(), &conops.ops);
+    node_editor_init(&editor, infos = fill_infos(), &conops.ops);
 
     bg.r = 0.10f, bg.g = 0.18f, bg.b = 0.24f, bg.a = 1.0f;
     float time = SDL_GetTicks() / 1000.0f;
@@ -149,6 +150,7 @@ int main(void)
 
 cleanup:
     node_editor_cleanup(&editor);
+    free(infos);
     nk_sdl_shutdown();
     SDL_GL_DeleteContext(glContext);
     SDL_DestroyWindow(win);

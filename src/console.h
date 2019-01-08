@@ -1,5 +1,5 @@
 
-#define INPUT_SIZE 64
+#define INPUT_SIZE 256
 
 struct console
 {
@@ -25,6 +25,16 @@ read_word(char *src, char *buf, int buf_size)
     while (*p != '\0' && *p != ' ' && i < n) buf[i++] = *p++;
     buf[i] = '\0';
     return p;
+}
+
+static int
+count_words(char *src)
+{
+    char buf[INPUT_SIZE];
+    char *p = src;
+    int i = 0;
+    while (*p != '\0') { p = read_word(p, buf, NK_LEN(buf)); ++i; }
+    return i;
 }
 
 static void
@@ -65,32 +75,40 @@ console_printf(struct console *console, char *fmt, ...)
 static void 
 console_execute(struct console *console, struct node_editor *editor, char *string)
 {
-    char word[INPUT_SIZE];
+#define ARGCHECK(cmd, cond) do { if (!(cond)) { console_print(console, "error: wrong number of arguments for '%s' command", cmd); return; } } while(0)
+
+    char buf[INPUT_SIZE];
     char *p = string;
+    int argc;
 
     if (!p) return;
 
-    p = read_word(p, word, NK_LEN(word));
+    p = read_word(p, buf, NK_LEN(buf));
 
-    if (word[0] == '\0') return;
+    if (buf[0] == '\0') return;
 
     console_print(console, skip_whitespace(string));
-    if (!strcmp(word, "save"))
+    p = skip_whitespace(p);
+    argc = count_words(p);
+
+    if (!strcmp(buf, "save"))
     {
-        p = skip_whitespace(p);
-        if (*p == '\0')
-        {
-            console_print(console, "error: no arguments given for 'save' command");
-        }
-        else
-        {
-            node_editor_save(editor, p);
-        }
+        ARGCHECK("save", argc == 1);
+        sprintf_s(buf, NK_LEN(buf), "%s.aig", p);
+        node_editor_save(editor, buf);
+    }
+    else if (!strcmp(buf, "load"))
+    {
+        ARGCHECK("load", argc == 1);
+        sprintf_s(buf, NK_LEN(buf), "%s.aig", p);
+        node_editor_load(editor, buf);
     }
     else
     {
         console_print(console, "error: invalid command");
     }
+
+#undef ARGCHECK
 }
 
 static void 

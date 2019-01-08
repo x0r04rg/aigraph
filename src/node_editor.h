@@ -245,7 +245,6 @@ node_editor_init(struct node_editor *editor, struct node_info *infos, struct pri
     editor->selected_id = -1;
     editor->infos = infos;
     editor->console = console;
-    node_editor_add(editor, NODE_SUM, 40, 10);
 }
 
 static void
@@ -255,7 +254,6 @@ node_editor_cleanup(struct node_editor *editor)
         if (editor->nodes[i].links.links)
             free(editor->nodes[i].links.links);
     free(editor->nodes);
-    free(editor->infos);
 }
 
 static struct node_link*
@@ -477,11 +475,6 @@ node_editor_gui(struct nk_context *ctx, struct node_editor *nodedit, struct nk_r
                 }
                 else
                 {
-                    if (nk_contextual_item_label(ctx, "_compile_", NK_TEXT_CENTERED))
-                    {
-                        struct compiled_graph *result = node_editor_compile(nodedit);
-                        free(result);
-                    }
                     for (int i = 0; i < NODE_TYPE_COUNT; i++)
                     {
                         if (nk_contextual_item_label(ctx, infos[i].name, NK_TEXT_CENTERED))
@@ -743,36 +736,41 @@ node_editor_compile(struct node_editor *editor)
 static void
 node_editor_save(struct node_editor *editor, char *path)
 {
-    struct compiled_graph *graph = node_editor_compile(editor);
-
-    if (!graph) editor_print(editor, "Warning: compilation failed (file will be saved anyway)");
-
     SDL_RWops *file = SDL_RWFromFile(path, "w");
     size_t pos, temp;
 
     if (!file) { editor_print(editor, SDL_GetError()); return; }
 
-    /* write graph */
+    /* write magic */
+    char *magic = "aigraph";
+    SDL_RWwrite(file, magic, 1, strlen(magic) + 1);
+
+    /* write compiled graph */
+    struct compiled_graph *graph = node_editor_compile(editor);
     if (graph)
     {
-        SDL_RWwrite(file, graph, 1, graph->size + sizeof *graph);
+        SDL_RWwrite(file, graph, graph->size + sizeof *graph, 1);
         free(graph);
     }
     else
     {
+        editor_print(editor, "warning: compilation failed (file will be saved anyway)");
         struct compiled_graph dummy;
         memset(&dummy, 0, sizeof dummy);
         SDL_RWwrite(file, &dummy, 1, sizeof dummy);
     }
+
+    /* write scroll */
+    SDL_RWwrite(file, &editor->scrolling, sizeof editor->scrolling, 1);
 
     /* write nodes */
     SDL_WriteLE32(file, editor->node_count);
     for (int i = 0; i < editor->node_count; ++i)
     {
         struct node *n = &editor->nodes[i];
-        SDL_WriteLE16(file, (Uint32)n->type);
-        SDL_WriteLE32(file, *((Uint32*)(&n->bounds.x)));
-        SDL_WriteLE32(file, *((Uint32*)(&n->bounds.y)));
+        SDL_WriteLE16(file, (uint16_t)n->type);
+        SDL_WriteLE32(file, *((uint32_t*)(&n->bounds.x)));
+        SDL_WriteLE32(file, *((uint32_t*)(&n->bounds.y)));
     }
 
     /* reserve space for link count */
@@ -791,8 +789,8 @@ node_editor_save(struct node_editor *editor, char *path)
             {
                 SDL_WriteLE32(file, i);
                 SDL_WriteLE32(file, link->other_id);
-                SDL_WriteU8(file, (Uint8)link->slot);
-                SDL_WriteU8(file, (Uint8)link->other_slot);
+                SDL_WriteU8(file, (uint8_t)link->slot);
+                SDL_WriteU8(file, (uint8_t)link->other_slot);
                 ++link_count;
             }
         }
@@ -825,8 +823,8 @@ node_editor_save(struct node_editor *editor, char *path)
             if (is_const[j])
             {
                 SDL_WriteLE32(file, i);
-                SDL_WriteLE32(file, *((Uint32*)(&n->constant_inputs[j])));
-                SDL_WriteU8(file, (Uint8)j);
+                SDL_WriteLE32(file, *((uint32_t*)(&n->constant_inputs[j])));
+                SDL_WriteU8(file, (uint8_t)j);
                 ++const_inputs;
             }
         }
@@ -838,7 +836,148 @@ node_editor_save(struct node_editor *editor, char *path)
     SDL_WriteLE32(file, const_inputs);
     SDL_RWseek(file, temp, RW_SEEK_SET);
 
-    SDL_RWclose(file);
+    if (SDL_RWclose(file) == -1)
+        editor_print(editor, SDL_GetError());
+    else
+        editor_printf(editor, "successfully saved into file '%s'", path);
+}
 
-    editor_printf(editor, "successfully saved into file '%s'", path);
+static void node_editor_clear(struct node_editor *editor)
+{
+    struct node_info *infos = editor->infos;
+    struct print_ops *console = editor->console;
+    node_editor_cleanup(editor);
+    node_editor_init(editor, infos, console);
+}
+
+static void
+node_editor_load(struct node_editor *editor, char *path)
+{
+#define READ(dst, size, n) do { if (!SDL_RWread(file, dst, size, n)) goto error; } while(0)
+#define SEEK(offset, mode) do { if (SDL_RWseek(file, offset, mode) == -1) goto error; } while(0)
+#define FAIL_IF(cond) do { if ((cond)) goto error; } while(0)
+
+    struct node_data {
+        node_type type;
+        float x, y;
+    };
+
+    struct link_data {
+        int input_id, output_id;
+        int input_slot, output_slot;
+    };
+
+    struct const_data {
+        int node_id;
+        int node_slot;
+        float value;
+    };
+
+    SDL_RWops *file = SDL_RWFromFile(path, "r");
+    struct nk_vec2 scroll;
+    struct node_data *nodes = NULL;
+    struct link_data *links = NULL;
+    struct const_data *consts = NULL;
+
+    if (!file) { editor_print(editor, SDL_GetError()); return; }
+
+    /* read magic */
+    char magic[8];
+    READ(&magic, 1, NK_LEN(magic));
+    if (strcmp(magic, "aigraph"))
+    {
+        editor_print(editor, "error: invalid file");
+        goto cleanup;
+    }
+
+    /* skip over compiled data */
+    struct compiled_graph graph;
+    READ(&graph, sizeof graph, 1);
+    FAIL_IF(graph.size < 0);
+    SEEK(graph.size, RW_SEEK_CUR);
+
+    /* read scroll */
+    READ(&scroll, sizeof scroll, 1);
+
+    /* read nodes */
+    int node_count = (int)SDL_ReadLE32(file);
+    FAIL_IF(node_count < 0 || node_count > 4096);
+    nodes = malloc(node_count * sizeof *nodes);
+    for (int i = 0; i < node_count; ++i)
+    {
+        node_type type = (node_type)SDL_ReadLE16(file);
+        uint32_t x_int = SDL_ReadLE32(file);
+        uint32_t y_int = SDL_ReadLE32(file);
+        FAIL_IF(type < 0 || type >= NODE_TYPE_COUNT);
+        nodes[i].type = type;
+        nodes[i].x = *((float*)(&x_int));
+        nodes[i].y = *((float*)(&y_int));
+    }
+
+    /* read links */
+    int link_count = (int)SDL_ReadLE32(file);
+    FAIL_IF(link_count < 0 || link_count > node_count * node_count);
+    links = malloc(link_count * sizeof *links);
+    for (int i = 0; i < link_count; ++i)
+    {
+        int ii = (int)SDL_ReadLE32(file);
+        int oi = (int)SDL_ReadLE32(file);
+        int is = (int)SDL_ReadU8(file);
+        int os = (int)SDL_ReadU8(file);
+        FAIL_IF(ii < 0 || ii >= node_count);
+        FAIL_IF(oi < 0 || oi >= node_count);
+        FAIL_IF(is < 0 || is >= MAX_INPUTS);
+        FAIL_IF(os < 0 || os >= MAX_INPUTS);
+        links[i].input_id = ii;
+        links[i].output_id = oi;
+        links[i].input_slot = is;
+        links[i].output_slot = os;
+    }
+
+    /* read consts */
+    int const_count = (int)SDL_ReadLE32(file);
+    FAIL_IF(const_count < 0 || const_count >= node_count * MAX_INPUTS);
+    consts = malloc(link_count * sizeof *consts);
+    for (int i = 0; i < const_count; ++i)
+    {
+        int id = (int)SDL_ReadLE32(file);
+        uint32_t value = SDL_ReadLE32(file);
+        int slot = (int)SDL_ReadU8(file);
+        FAIL_IF(id < 0 || id >= node_count);
+        FAIL_IF(slot < 0 || slot >= MAX_INPUTS);
+        consts[i].node_id = id;
+        consts[i].node_slot = slot;
+        consts[i].value = *((float*)(&value));
+    }
+
+    node_editor_clear(editor);
+
+    for (int i = 0; i < node_count; ++i)
+        node_editor_add(editor, nodes[i].type, nodes[i].x, nodes[i].y);
+    for (int i = 0; i < link_count; ++i)
+        node_editor_link(editor, links[i].input_id, links[i].input_slot,
+            links[i].output_id, links[i].output_slot);
+    for (int i = 0; i < const_count; ++i)
+        editor->nodes[consts[i].node_id].constant_inputs[consts[i].node_slot] =
+            consts[i].value;
+    editor->scrolling = scroll;
+
+    editor_printf(editor, "file loaded: %d nodes, %d links, %d consts",
+        node_count, link_count, const_count);
+
+    if (0) {
+error:
+        editor_print(editor, "error while reading file", path);
+    }
+
+cleanup:
+    if (nodes) free(nodes);
+    if (links) free(links);
+    if (consts) free(consts);
+    SDL_RWclose(file);
+    return;
+
+#undef READ
+#undef SEEK
+#undef FAIL_IF
 }
