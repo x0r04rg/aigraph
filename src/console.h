@@ -45,6 +45,14 @@ console_init(struct console *console)
 }
 
 static void
+console_cleanup(struct console *console)
+{
+    for (int i = 0; i < console->history_size; ++i)
+        free(console->history[i]);
+    free(console->history);
+}
+
+static void
 console_print(struct console *console, char *string)
 {
     if (console->history_size == console->history_capacity)
