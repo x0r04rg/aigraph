@@ -19,7 +19,7 @@ struct node_link_list {
     struct node_link *links;
 };
 
-union node_field
+union node_property
 {
     int i;
     float f;
@@ -31,7 +31,7 @@ struct node {
     struct nk_rect bounds;
     struct node_link_list links;
     float *consts;
-    union node_field *fields;
+    union node_property *props;
     node_mark mark; // needed for topological search
 };
 
@@ -164,9 +164,9 @@ node_editor_add(struct node_editor *editor, node_type type, float pos_x, float p
     memset(node, 0, sizeof *node);
     node->type = type;
     node->bounds = nk_rect(pos_x, pos_y, NODE_WIDTH, 30 * 
-        (info->input_count + info->output_count + info->field_count) + 35);
+        (info->input_count + info->output_count + info->prop_count) + 35);
     node->consts = calloc(info->input_count, sizeof *node->consts);
-    node->fields = calloc(info->field_count, sizeof *node->fields);
+    node->props = calloc(info->prop_count, sizeof *node->props);
 }
 
 static void 
@@ -187,7 +187,7 @@ node_editor_delete(struct node_editor *editor, int node_id)
     }
 
     free(node->links.links);
-    free(node->fields);
+    free(node->props);
     free(node->consts);
 
     *node = editor->nodes[--editor->node_count];
@@ -339,20 +339,20 @@ node_editor_gui(struct nk_context *ctx, struct node_editor *nodedit, struct nk_r
                     {
                         nk_label(ctx, info->outputs[i].name, NK_TEXT_ALIGN_RIGHT | NK_TEXT_ALIGN_MIDDLE);
                     }
-                    for (int i = 0; i < info->field_count; ++i)
+                    for (int i = 0; i < info->prop_count; ++i)
                     {
-                        sprintf_s(pname, NK_LEN(pname), "#%s", info->fields[i].name);
-                        switch (info->fields[i].type)
+                        sprintf_s(pname, NK_LEN(pname), "#%s", info->props[i].name);
+                        switch (info->props[i].type)
                         {
                             case FIELD_INT: 
-                                it->fields[i].i = nk_propertyi(ctx, pname, -100, it->fields[i].i, 100, 1, 1);
+                                it->props[i].i = nk_propertyi(ctx, pname, -100, it->props[i].i, 100, 1, 1);
                                 break;
                             case FIELD_FLOAT:
-                                it->fields[i].f = nk_propertyf(ctx, pname, -100, it->fields[i].f, 100, 1, 1);
+                                it->props[i].f = nk_propertyf(ctx, pname, -100, it->props[i].f, 100, 1, 1);
                                 break;
                             case FIELD_ENUM:
-                                {struct enum_info *e = &nodedit->conf->enums[info->fields[i].enum_type];
-                                it->fields[i].e = nk_combo(ctx, e->values, e->count, it->fields[i].e, 
+                                {struct enum_info *e = &nodedit->conf->enums[info->props[i].enum_type];
+                                it->props[i].e = nk_combo(ctx, e->values, e->count, it->props[i].e, 
                                     25, nk_vec2(nk_layout_widget_bounds(ctx).w, 200));}
                                 break;
                         }
@@ -411,7 +411,7 @@ node_editor_gui(struct nk_context *ctx, struct node_editor *nodedit, struct nk_r
                     space = 29;
                     for (n = 0; n < infos[it->type].input_count; ++n) {
                         struct nk_rect circle;
-                        int row = n + infos[it->type].output_count + infos[it->type].field_count;
+                        int row = n + infos[it->type].output_count + infos[it->type].prop_count;
                         circle.x = node->bounds.x-4;
                         circle.y = node->bounds.y + space * (float)row + node->header_height + space / 2;
                         circle.w = 8; circle.h = 8;
@@ -450,7 +450,7 @@ node_editor_gui(struct nk_context *ctx, struct node_editor *nodedit, struct nk_r
                         struct node *no = &nodedit->nodes[link->other_id];
                         float spacei = 29;
                         float spaceo = 29;
-                        int o_idx = link->other_slot + infos[no->type].output_count + infos[no->type].field_count;
+                        int o_idx = link->other_slot + infos[no->type].output_count + infos[no->type].prop_count;
                         struct nk_vec2 l0 = nk_layout_space_to_screen(ctx,
                             nk_vec2(ni->bounds.x + ni->bounds.w, 3.0f + ni->bounds.y + spacei * (float)(link->slot) + 43));
                         struct nk_vec2 l1 = nk_layout_space_to_screen(ctx,
@@ -869,6 +869,31 @@ node_editor_save(struct node_editor *editor, char *path)
     SDL_WriteLE32(file, const_inputs);
     SDL_RWseek(file, temp, RW_SEEK_SET);
 
+    /* reserve space for property count */
+    pos = SDL_RWtell(file);
+    SDL_WriteLE32(file, 0);
+
+    /* write properties */
+    int property_count = 0;
+    for (int i = 0; i < editor->node_count; ++i)
+    {
+        struct node *n = &editor->nodes[i];
+        struct node_info *info = &editor->conf->nodes[n->type];
+        for (int j = 0; j < info->prop_count; ++j)
+        {
+            SDL_WriteLE32(file, i);
+            SDL_WriteLE32(file, (uint32_t)n->props[j].i);
+            SDL_WriteU8(file, (uint8_t)j);
+            ++property_count;
+        }
+    }
+
+    /* write property count */
+    temp = SDL_RWtell(file);
+    SDL_RWseek(file, pos, RW_SEEK_SET);
+    SDL_WriteLE32(file, property_count);
+    SDL_RWseek(file, temp, RW_SEEK_SET);
+
     if (SDL_RWclose(file) == -1)
         editor_print(editor, SDL_GetError());
     else
@@ -906,11 +931,18 @@ node_editor_load(struct node_editor *editor, char *path)
         float value;
     };
 
+    struct property_data {
+        int node_id;
+        int idx;
+        int value;
+    };
+
     SDL_RWops *file = SDL_RWFromFile(path, "r");
     struct nk_vec2 scroll;
     struct node_data *nodes = NULL;
     struct link_data *links = NULL;
     struct const_data *consts = NULL;
+    struct property_data *props = NULL;
 
     if (!file) { editor_print(editor, SDL_GetError()); return; }
 
@@ -935,56 +967,85 @@ node_editor_load(struct node_editor *editor, char *path)
     /* read nodes */
     int node_count = (int)SDL_ReadLE32(file);
     FAIL_IF(node_count < 0 || node_count > 4096);
-    nodes = malloc(node_count * sizeof *nodes);
-    for (int i = 0; i < node_count; ++i)
+    if (node_count)
     {
-        node_type type = (node_type)SDL_ReadLE16(file);
-        uint32_t x_int = SDL_ReadLE32(file);
-        uint32_t y_int = SDL_ReadLE32(file);
-        FAIL_IF(type < 0 || type >= editor->conf->node_count);
-        nodes[i].type = type;
-        nodes[i].x = *((float*)(&x_int));
-        nodes[i].y = *((float*)(&y_int));
+        nodes = malloc(node_count * sizeof *nodes);
+        for (int i = 0; i < node_count; ++i)
+        {
+            node_type type = (node_type)SDL_ReadLE16(file);
+            uint32_t x_int = SDL_ReadLE32(file);
+            uint32_t y_int = SDL_ReadLE32(file);
+            FAIL_IF(type < 0 || type >= editor->conf->node_count);
+            nodes[i].type = type;
+            nodes[i].x = *((float*)(&x_int));
+            nodes[i].y = *((float*)(&y_int));
+        }
     }
 
     /* read links */
     int link_count = (int)SDL_ReadLE32(file);
     FAIL_IF(link_count < 0 || link_count > node_count * node_count);
-    links = malloc(link_count * sizeof *links);
-    for (int i = 0; i < link_count; ++i)
+    if (link_count)
     {
-        int ii = (int)SDL_ReadLE32(file);
-        int oi = (int)SDL_ReadLE32(file);
-        int is = (int)SDL_ReadU8(file);
-        int os = (int)SDL_ReadU8(file);
-        FAIL_IF(ii < 0 || ii >= node_count);
-        FAIL_IF(oi < 0 || oi >= node_count);
-        FAIL_IF(is < 0);
-        FAIL_IF(os < 0);
-        links[i].input_id = ii;
-        links[i].output_id = oi;
-        links[i].input_slot = is;
-        links[i].output_slot = os;
+        links = malloc(link_count * sizeof *links);
+        for (int i = 0; i < link_count; ++i)
+        {
+            int ii = (int)SDL_ReadLE32(file);
+            int oi = (int)SDL_ReadLE32(file);
+            int is = (int)SDL_ReadU8(file);
+            int os = (int)SDL_ReadU8(file);
+            FAIL_IF(ii < 0 || ii >= node_count);
+            FAIL_IF(oi < 0 || oi >= node_count);
+            FAIL_IF(is < 0);
+            FAIL_IF(os < 0);
+            links[i].input_id = ii;
+            links[i].output_id = oi;
+            links[i].input_slot = is;
+            links[i].output_slot = os;
+        }
     }
 
     /* read consts */
     int const_count = (int)SDL_ReadLE32(file);
     FAIL_IF(const_count < 0);
-    consts = malloc(link_count * sizeof *consts);
-    for (int i = 0; i < const_count; ++i)
+    if (const_count)
     {
-        int id = (int)SDL_ReadLE32(file);
-        uint32_t value = SDL_ReadLE32(file);
-        int slot = (int)SDL_ReadU8(file);
-        FAIL_IF(id < 0 || id >= node_count);
-        FAIL_IF(slot < 0);
-        consts[i].node_id = id;
-        consts[i].node_slot = slot;
-        consts[i].value = *((float*)(&value));
+        consts = malloc(const_count * sizeof *consts);
+        for (int i = 0; i < const_count; ++i)
+        {
+            int id = (int)SDL_ReadLE32(file);
+            uint32_t value = SDL_ReadLE32(file);
+            int slot = (int)SDL_ReadU8(file);
+            FAIL_IF(id < 0 || id >= node_count);
+            FAIL_IF(slot < 0);
+            consts[i].node_id = id;
+            consts[i].node_slot = slot;
+            consts[i].value = *((float*)(&value));
+        }
+    }
+
+    /* read properties */
+    int property_count = (int)SDL_ReadLE32(file);
+    FAIL_IF(property_count < 0);
+    if (property_count)
+    {
+        props = malloc(property_count * sizeof *props);
+        for (int i = 0; i < property_count; ++i)
+        {
+            int id = (int)SDL_ReadLE32(file);
+            int value = (int)SDL_ReadLE32(file);
+            int idx = (int)SDL_ReadU8(file);
+            FAIL_IF(id < 0 || id >= node_count);
+            FAIL_IF(idx < 0);
+            props[i].node_id = id;
+            props[i].value = value;
+            props[i].idx = idx;
+        }
     }
 
     node_editor_clear(editor);
 
+    /* TODO verify data */
     for (int i = 0; i < node_count; ++i)
         node_editor_add(editor, nodes[i].type, nodes[i].x, nodes[i].y);
     for (int i = 0; i < link_count; ++i)
@@ -993,10 +1054,13 @@ node_editor_load(struct node_editor *editor, char *path)
     for (int i = 0; i < const_count; ++i)
         editor->nodes[consts[i].node_id].consts[consts[i].node_slot] =
             consts[i].value;
+    for (int i = 0; i < property_count; ++i)
+        editor->nodes[props[i].node_id].props[props[i].idx].i =
+            props[i].value;
     editor->scrolling = scroll;
 
-    editor_printf(editor, "file loaded: %d nodes, %d links, %d consts",
-        node_count, link_count, const_count);
+    editor_printf(editor, "file loaded: %d nodes, %d links, %d consts, %d properties",
+        node_count, link_count, const_count, property_count);
 
     if (0) {
 error:
@@ -1007,6 +1071,7 @@ cleanup:
     if (nodes) free(nodes);
     if (links) free(links);
     if (consts) free(consts);
+    if (props) free(props);
     SDL_RWclose(file);
     return;
 

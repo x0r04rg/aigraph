@@ -46,13 +46,13 @@ struct play_anim
     float *in;
 };
 
-typedef enum { FIELD_INT, FIELD_FLOAT, FIELD_ENUM } field_type;
+typedef enum { FIELD_INT, FIELD_FLOAT, FIELD_ENUM } property_type;
 
-struct field_info
+struct property_info
 {
     char *name;
     size_t offset;
-    field_type type;
+    property_type type;
     short enum_type;
 };
 
@@ -73,10 +73,10 @@ struct node_info
     char *name;
     char *category;
     int size;
-    int field_count;
+    int prop_count;
     int input_count;
     int output_count;
-    struct field_info *fields;
+    struct property_info *props;
     struct input_info *inputs;
     struct output_info *outputs;
 };
@@ -95,46 +95,46 @@ struct config
     int node_count;
 };
 
-struct input_info sum_inputs[] = 
+static struct input_info sum_inputs[] = 
 { 
     {.name = "in0", .offset = offsetof(struct sum, in0)},
     {.name = "in1", .offset = offsetof(struct sum, in1)}
 };
-struct output_info sum_outputs[] = 
+static struct output_info sum_outputs[] = 
 {
     {.name = "out", .offset = offsetof(struct sum, out)}
 };
-struct input_info sum3_inputs[] = 
+static struct input_info sum3_inputs[] = 
 { 
     {.name = "in0", .offset = offsetof(struct sum3, in0)},
     {.name = "in1", .offset = offsetof(struct sum3, in1)},
     {.name = "in2", .offset = offsetof(struct sum3, in2)}
 };
-struct output_info sum3_outputs[] = 
+static struct output_info sum3_outputs[] = 
 {
     {.name = "out", .offset = offsetof(struct sum3, out)}
 };
-struct input_info negate_inputs[] = 
+static struct input_info negate_inputs[] = 
 {
     {.name = "in", .offset = offsetof(struct negate, in)},
 };
-struct output_info negate_outputs[] = 
+static struct output_info negate_outputs[] = 
 {
     {.name = "out", .offset = offsetof(struct negate, out)}
 };
-struct input_info play_anim_inputs[] = 
+static struct input_info play_anim_inputs[] = 
 {
     {.name = "in", .offset = offsetof(struct play_anim, in)}
 };
-struct field_info play_anim_fields[] =
+static struct property_info play_anim_props[] =
 {
     {.name = "animation", .offset = offsetof(struct play_anim, anim_id),
      .type = FIELD_ENUM, .enum_type = 0 /* animation */ }
 };
 #define INPUTS(x) .inputs = x, .input_count = LEN(x)
 #define OUTPUTS(x) .outputs = x, .output_count = LEN(x)
-#define FIELDS(x) .fields = x, .field_count = LEN(x)
-const struct node_info default_nodes[] = 
+#define PROPS(x) .props = x, .prop_count = LEN(x)
+static struct node_info default_nodes[] = 
 {
     {.name = "sum", .category = "math", .size = sizeof(struct sum), 
      INPUTS(sum_inputs), OUTPUTS(sum_outputs)},
@@ -143,15 +143,15 @@ const struct node_info default_nodes[] =
     {.name = "negate", .category = "math", .size = sizeof(struct negate),
      INPUTS(negate_inputs), OUTPUTS(negate_outputs)},
     {.name = "play_anim", .category = "control", .size = sizeof(struct play_anim),
-     INPUTS(play_anim_inputs), FIELDS(play_anim_fields)}
+     INPUTS(play_anim_inputs), PROPS(play_anim_props)}
 };
 #undef INPUTS
 #undef OUTPUTS
-#undef FIELDS
+#undef PROPS
 
-const char *animation_enum[] = {"idle", "wave_hand"};
+static char *animation_enum[] = {"idle", "wave_hand"};
 #define ENUM(x) {.count = LEN(x), .values = x}
-const struct enum_info default_enums[] = 
+static struct enum_info default_enums[] = 
 {
     ENUM(animation_enum)
 };
