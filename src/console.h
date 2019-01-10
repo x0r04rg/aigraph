@@ -1,6 +1,12 @@
 
 #define INPUT_SIZE 256
 
+struct console;
+static void console_print(struct console *console, char *string);
+static void console_printfv(struct console *console, char *fmt, va_list args);
+static void console_printf(struct console *console, char *fmt, ...);
+
+#ifdef CONSOLE_IMPLEMENTATION
 struct console
 {
     char input[INPUT_SIZE];
@@ -64,7 +70,8 @@ console_print(struct console *console, char *string)
     console->history[console->history_size++] = _strdup(string);
 }
 
-static void console_printfv(struct console *console, char *fmt, va_list args)
+static void 
+console_printfv(struct console *console, char *fmt, va_list args)
 {
     char buf[INPUT_SIZE];
     _vsnprintf(buf, INPUT_SIZE, fmt, args);
@@ -191,3 +198,4 @@ console_gui(struct nk_context *ctx, struct console *console, struct node_editor 
         }
     }
 }
+#endif

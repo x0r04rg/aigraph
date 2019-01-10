@@ -32,24 +32,8 @@
 #define MAX_ELEMENT_MEMORY 128 * 1024
 
 #include "node_editor.h"
+#define CONSOLE_IMPLEMENTATION
 #include "console.h"
-
-struct console_ops {
-    struct print_ops ops;
-    struct console *console;
-};
-
-static void 
-printops_print(struct print_ops *ops, char *string)
-{
-    console_print(((struct console_ops*)ops)->console, string);
-}
-
-static void 
-printops_printfv(struct print_ops *ops, char *fmt, va_list args)
-{
-    console_printfv(((struct console_ops*)ops)->console, fmt, args);
-}
 
 int main(void)
 {
@@ -65,14 +49,9 @@ int main(void)
 
     struct node_editor editor;
     struct console console;
-    struct console_ops conops;
     struct config config;
 
     console_init(&console);
-
-    conops.ops.print = &printops_print;
-    conops.ops.printfv = &printops_printfv;
-    conops.console = &console;
 
     /* SDL setup */
     SDL_SetHint(SDL_HINT_VIDEO_HIGHDPI_DISABLED, "0");
@@ -109,7 +88,7 @@ int main(void)
     nk_sdl_font_stash_end();}
 
     config_init_default(&config);
-    node_editor_init(&editor, &config, &conops.ops);
+    node_editor_init(&editor, &config, &console);
 
     bg.r = 0.10f, bg.g = 0.18f, bg.b = 0.24f, bg.a = 1.0f;
     float time = SDL_GetTicks() / 1000.0f;

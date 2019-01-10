@@ -1,6 +1,7 @@
 
 #include <SDL2/SDL_rwops.h>
 #include "aigraph.h"
+#include "console.h"
 
 #define NODE_WIDTH 180.0f
 
@@ -41,14 +42,9 @@ struct node_linking {
     int input_slot;
 };
 
-struct print_ops {
-    void(*print)(struct print_ops *ctx, char *string);
-    void(*printfv)(struct print_ops *ctx, char *fmt, va_list args);
-};
-
 struct node_editor {
     struct config *conf;
-    struct print_ops *console;
+    struct console *console;
     struct node *nodes;
     size_t node_count, nodes_capacity;
     struct nk_rect bounds;
@@ -137,7 +133,7 @@ get_link(struct node_link_list *list, int i)
 static inline void
 editor_print(struct node_editor *editor, char *string)
 {
-    editor->console->print(editor->console, string);
+    console_print(editor->console, string);
 }
 
 static inline void
@@ -145,7 +141,7 @@ editor_printf(struct node_editor *editor, char *fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    editor->console->printfv(editor->console, fmt, args);
+    console_printfv(editor->console, fmt, args);
     va_end(args);
 }
 
@@ -248,7 +244,7 @@ node_editor_unlink(struct node_editor *editor, int in_id, int in_slot,
 }
 
 static void
-node_editor_init(struct node_editor *editor, struct config *config, struct print_ops *console)
+node_editor_init(struct node_editor *editor, struct config *config, struct console *console)
 {
     memset(editor, 0, sizeof(*editor));
     editor->selected_id = -1;
@@ -630,142 +626,6 @@ tsort(struct node *nodes, int node_count, struct node **sorted)
     return result;
 }
 
-static struct compiled_graph*
-node_editor_compile(struct node_editor *editor)
-{
-    struct node **sorted = malloc(editor->node_count * sizeof(struct node*));
-
-    int tsort_success = tsort(editor->nodes, editor->node_count, sorted);
-    if (!tsort_success)
-    {
-        free(sorted);
-        return NULL;
-    }
-
-    /* compile graph into binary blob */
-    {
-#define PAD_TO_ALIGN(pos, align) do { size_t p = (pos / align) * align; if (p != pos) pos = p + align; } while(0)
-
-        struct node_info *infos = editor->conf->nodes;
-        char *data;
-        size_t pos = 0;
-        const int align = 8;
-
-        /* size prepass */
-        pos += sizeof(struct compiled_graph);
-        PAD_TO_ALIGN(pos, align);
-        for (int i = 0; i < editor->node_count; i++)
-        {
-            struct node *n = sorted[i];
-
-            for (int j = 0; j < infos[n->type].input_count; j++)
-                if (!find_node_input(n, j)) pos += sizeof(float);
-
-            PAD_TO_ALIGN(pos, align);
-
-            pos += infos[n->type].size;
-
-            PAD_TO_ALIGN(pos, align);
-        }
-
-        /* write constant inputs, remember offsets */
-        data = malloc(pos);
-        memset(data, 0, pos);
-        ((struct compiled_graph*)data)->size = pos - sizeof(struct compiled_graph);
-        pos = 0;
-        size_t *offsets = malloc(editor->node_count * sizeof *offsets);
-
-        pos += sizeof(struct compiled_graph);
-        PAD_TO_ALIGN(pos, align);
-        for (int i = 0; i < editor->node_count; ++i)
-        {
-            struct node *n = sorted[i];
-            struct node_info *info = &infos[n->type];
-            size_t input_offsets[16];
-
-            NK_ASSERT(info->input_count <= NK_LEN(input_offsets));
-
-            for (int j = 0; j < info->input_count; ++j)
-            {
-                if (!find_node_input(n, j))
-                {
-                    *((float*)(data + pos)) = n->consts[j];
-                    input_offsets[j] = pos;
-                    pos += sizeof(float);
-                }
-                else
-                    input_offsets[j] = 0;
-            }
-
-            PAD_TO_ALIGN(pos, align);
-
-            offsets[i] = pos;
-            ((struct node_base*)(data + pos))->type = n->type;
-
-            for (int j = 0; j < info->input_count; ++j)
-            {
-                if (input_offsets[j])
-                {
-                    *((float**)(data + pos + info->inputs[j].offset)) = input_offsets[j];
-                }
-            }
-
-            pos += infos[n->type].size;
-
-            PAD_TO_ALIGN(pos, align);
-        }
-
-        /* write node offsets */
-        ((struct compiled_graph*)data)->first = (struct node_base*)offsets[0];
-        for (int i = 0; i < editor->node_count - 1; ++i)
-            ((struct node_base*)(data + offsets[i]))->next = (struct node_base*)offsets[i + 1];
-
-        {
-            /* index in sorted array by id */
-            int *srt = malloc(editor->node_count * sizeof *srt);
-            for (int i = 0; i < editor->node_count; ++i)
-            {
-                for (int j = 0; j < editor->node_count; ++j)
-                {
-                    if (sorted[j] == &editor->nodes[i])
-                    {
-                        srt[i] = j;
-                        break;
-                    }
-                }
-            }
-
-            /* write input offsets */
-            for (int i = 0; i < editor->node_count; ++i)
-            {
-                struct node *n = sorted[i];
-                for (int j = 0; j < n->links.size; ++j)
-                {
-                    struct node_link *link = get_link(&n->links, j);
-                    if (link->type == LINK_INBOUND)
-                    {
-                        struct node *o = &editor->nodes[link->other_id];
-                        int o_idx = srt[link->other_id];
-                        size_t in_offset = offsets[i] + infos[n->type].inputs[link->slot].offset;
-                        size_t out_offset = offsets[o_idx] + infos[o->type].outputs[link->other_slot].offset;
-
-                        *((float**)(data + in_offset)) = (float*)(out_offset);
-                    }
-                }
-            }
-
-            free(srt);
-        }
-
-        free(offsets);
-        free(sorted);
-
-        return (struct compiled_graph*)data;
-
-#undef PAD_TO_ALIGN
-    }
-}
-
 static void
 node_editor_save(struct node_editor *editor, char *path)
 {
@@ -777,21 +637,6 @@ node_editor_save(struct node_editor *editor, char *path)
     /* write magic */
     char *magic = "aigraph";
     SDL_RWwrite(file, magic, 1, strlen(magic) + 1);
-
-    /* write compiled graph */
-    struct compiled_graph *graph = node_editor_compile(editor);
-    if (graph)
-    {
-        SDL_RWwrite(file, graph, graph->size + sizeof *graph, 1);
-        free(graph);
-    }
-    else
-    {
-        editor_print(editor, "warning: compilation failed (file will be saved anyway)");
-        struct compiled_graph dummy;
-        memset(&dummy, 0, sizeof dummy);
-        SDL_RWwrite(file, &dummy, 1, sizeof dummy);
-    }
 
     /* write scroll */
     SDL_RWwrite(file, &editor->scrolling, sizeof editor->scrolling, 1);
@@ -954,12 +799,6 @@ node_editor_load(struct node_editor *editor, char *path)
         editor_print(editor, "error: invalid file");
         goto cleanup;
     }
-
-    /* skip over compiled data */
-    struct compiled_graph graph;
-    READ(&graph, sizeof graph, 1);
-    FAIL_IF(graph.size < 0);
-    SEEK(graph.size, RW_SEEK_CUR);
 
     /* read scroll */
     READ(&scroll, sizeof scroll, 1);

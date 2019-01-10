@@ -7,51 +7,11 @@
 
 typedef short node_type;
 
-struct node_base
-{
-    struct node_base *next;
-    node_type type;
-};
-
-struct compiled_graph
-{
-    size_t size; /* size of data after this struct */
-    struct node_base *first;
-};
-
-struct sum
-{
-    struct node_base base;
-    float *in0, *in1;
-    float out;
-};
-
-struct sum3
-{
-    struct node_base base;
-    float *in0, *in1, *in2;
-    float out;
-};
-
-struct negate
-{
-    struct node_base base;
-    float *in, out;
-};
-
-struct play_anim
-{
-    struct node_base;
-    int anim_id;
-    float *in;
-};
-
 typedef enum { FIELD_INT, FIELD_FLOAT, FIELD_ENUM } property_type;
 
 struct property_info
 {
     char *name;
-    size_t offset;
     property_type type;
     short enum_type;
 };
@@ -59,20 +19,17 @@ struct property_info
 struct input_info
 {
     char *name;
-    size_t offset;
 };
 
 struct output_info
 {
     char *name;
-    size_t offset;
 };
 
 struct node_info
 {
     char *name;
     char *category;
-    int size;
     int prop_count;
     int input_count;
     int output_count;
@@ -97,53 +54,48 @@ struct config
 
 static struct input_info sum_inputs[] = 
 { 
-    {.name = "in0", .offset = offsetof(struct sum, in0)},
-    {.name = "in1", .offset = offsetof(struct sum, in1)}
+    {.name = "in0"},
+    {.name = "in1"}
 };
 static struct output_info sum_outputs[] = 
 {
-    {.name = "out", .offset = offsetof(struct sum, out)}
+    {.name = "out"}
 };
 static struct input_info sum3_inputs[] = 
 { 
-    {.name = "in0", .offset = offsetof(struct sum3, in0)},
-    {.name = "in1", .offset = offsetof(struct sum3, in1)},
-    {.name = "in2", .offset = offsetof(struct sum3, in2)}
+    {.name = "in0"},
+    {.name = "in1"},
+    {.name = "in2"}
 };
 static struct output_info sum3_outputs[] = 
 {
-    {.name = "out", .offset = offsetof(struct sum3, out)}
+    {.name = "out"}
 };
 static struct input_info negate_inputs[] = 
 {
-    {.name = "in", .offset = offsetof(struct negate, in)},
+    {.name = "in"},
 };
 static struct output_info negate_outputs[] = 
 {
-    {.name = "out", .offset = offsetof(struct negate, out)}
+    {.name = "out"}
 };
 static struct input_info play_anim_inputs[] = 
 {
-    {.name = "in", .offset = offsetof(struct play_anim, in)}
+    {.name = "in"}
 };
 static struct property_info play_anim_props[] =
 {
-    {.name = "animation", .offset = offsetof(struct play_anim, anim_id),
-     .type = FIELD_ENUM, .enum_type = 0 /* animation */ }
+    {.name = "animation", .type = FIELD_ENUM, .enum_type = 0 /* animation */ }
 };
 #define INPUTS(x) .inputs = x, .input_count = LEN(x)
 #define OUTPUTS(x) .outputs = x, .output_count = LEN(x)
 #define PROPS(x) .props = x, .prop_count = LEN(x)
 static struct node_info default_nodes[] = 
 {
-    {.name = "sum", .category = "math", .size = sizeof(struct sum), 
-     INPUTS(sum_inputs), OUTPUTS(sum_outputs)},
-    {.name = "sum3", .category = "math", .size = sizeof(struct sum3),
-     INPUTS(sum3_inputs), OUTPUTS(sum3_outputs)},
-    {.name = "negate", .category = "math", .size = sizeof(struct negate),
-     INPUTS(negate_inputs), OUTPUTS(negate_outputs)},
-    {.name = "play_anim", .category = "control", .size = sizeof(struct play_anim),
-     INPUTS(play_anim_inputs), PROPS(play_anim_props)}
+    {.name = "sum", .category = "math", INPUTS(sum_inputs), OUTPUTS(sum_outputs)},
+    {.name = "sum3", .category = "math", INPUTS(sum3_inputs), OUTPUTS(sum3_outputs)},
+    {.name = "negate", .category = "math", INPUTS(negate_inputs), OUTPUTS(negate_outputs)},
+    {.name = "play_anim", .category = "control", INPUTS(play_anim_inputs), PROPS(play_anim_props)}
 };
 #undef INPUTS
 #undef OUTPUTS
