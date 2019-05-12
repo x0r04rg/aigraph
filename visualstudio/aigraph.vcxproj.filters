@@ -8,11 +8,14 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\src\main.c" />
+    <ClCompile Include="..\src\json.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\src\node_editor.h" />
     <ClInclude Include="..\src\nuklear_sdl_gl3.h" />
-    <ClInclude Include="..\src\aigraph.h" />
     <ClInclude Include="..\src\console.h" />
+    <ClInclude Include="..\src\json.h" />
+    <ClInclude Include="..\src\nuklear.h" />
+    <ClInclude Include="..\src\config.h" />
   </ItemGroup>
 </Project>

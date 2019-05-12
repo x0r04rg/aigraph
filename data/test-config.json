@@ -1,0 +1,34 @@
+{
+  "enums": {
+    "animation": ["idle", "wave_hand"]
+  },
+  "nodes": {
+    "sum": {
+      "category": "math",
+      "inputs": {
+        "in": "float"
+      },
+      "outputs": {
+        "out": "float"
+      }
+    },
+    "negate": {
+      "category": "math",
+      "inputs": {
+        "in": "float"
+      },
+      "outputs": {
+        "out": "float"
+      }
+    },
+    "play_anim": {
+      "category": "control",
+      "properties": {
+        "animation": "animation"
+      },
+      "inputs": {
+        "in": "float"
+      }
+    }
+  }
+}

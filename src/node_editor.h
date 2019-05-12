@@ -1,7 +1,8 @@
 
 #include <SDL2/SDL_rwops.h>
-#include "aigraph.h"
+#include "config.h"
 #include "console.h"
+#include "json.h"
 
 #define NODE_WIDTH 180.0f
 
@@ -25,6 +26,7 @@ union node_property
     int i;
     float f;
     short e;
+    char *s;
 };
 
 struct node {
@@ -40,17 +42,24 @@ struct node_linking {
     int active;
     int input_id;
     int input_slot;
+    char *input_type;
 };
 
 struct node_editor {
-    struct config *conf;
+    struct config conf;
     struct console *console;
     struct node *nodes;
-    size_t node_count, nodes_capacity;
+    int node_count, nodes_capacity;
     struct nk_rect bounds;
     int selected_id;
     struct nk_vec2 scrolling;
     struct node_linking linking;
+    struct
+    {
+        char buffer[256];
+        int node;
+        int property;
+    } textedit;
 };
 
 static float
@@ -98,7 +107,7 @@ is_hovering_curve(float mx, float my, float ax, float ay, float c1x, float c1y,
     return 0;
 }
 
-static inline void 
+static void 
 add_link(struct node_link_list *list, enum link_type type, int slot, int other_id, 
     int other_slot)
 {
@@ -131,13 +140,13 @@ get_link(struct node_link_list *list, int i)
 }
 
 static inline void
-editor_print(struct node_editor *editor, char *string)
+editor_print(struct node_editor *editor, const char *string)
 {
     console_print(editor->console, string);
 }
 
 static inline void
-editor_printf(struct node_editor *editor, char *fmt, ...)
+editor_printf(struct node_editor *editor, const char *fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
@@ -148,19 +157,19 @@ editor_printf(struct node_editor *editor, char *fmt, ...)
 static void
 node_editor_add(struct node_editor *editor, node_type type, float pos_x, float pos_y)
 {
-    struct node_info *info = &editor->conf->nodes[type];
+    struct node_info *info = &editor->conf.nodes[type];
     struct node *node;
     if (editor->node_count == editor->nodes_capacity)
     {
         size_t new_capacity = editor->nodes_capacity ? 2 * editor->nodes_capacity : 10;
         editor->nodes = realloc(editor->nodes, new_capacity * sizeof(struct node));
-        editor->nodes_capacity = new_capacity;
+        editor->nodes_capacity = (int)new_capacity;
     }
     node = &editor->nodes[editor->node_count++];
     memset(node, 0, sizeof *node);
     node->type = type;
-    node->bounds = nk_rect(pos_x, pos_y, NODE_WIDTH, 30 * 
-        (info->input_count + info->output_count + info->prop_count) + 35);
+    node->bounds = nk_rect(pos_x, pos_y, NODE_WIDTH, (float)(30 * 
+        (info->input_count + info->output_count + info->prop_count) + 35));
     node->consts = calloc(info->input_count, sizeof *node->consts);
     node->props = calloc(info->prop_count, sizeof *node->props);
 }
@@ -244,21 +253,32 @@ node_editor_unlink(struct node_editor *editor, int in_id, int in_slot,
 }
 
 static void
-node_editor_init(struct node_editor *editor, struct config *config, struct console *console)
+node_editor_init(struct node_editor *editor, struct console *console)
 {
     memset(editor, 0, sizeof(*editor));
     editor->selected_id = -1;
-    editor->conf = config;
     editor->console = console;
+}
+
+static void node_editor_clear(struct node_editor *editor)
+{
+    struct console *console = editor->console;
+    struct config config = editor->conf;
+
+    for (int i = 0; i < editor->node_count; ++i)
+        if (editor->nodes[i].links.links)
+            free(editor->nodes[i].links.links);
+    free(editor->nodes);
+
+    node_editor_init(editor, console);
+    editor->conf = config;
 }
 
 static void
 node_editor_cleanup(struct node_editor *editor)
 {
-    for (int i = 0; i < editor->node_count; ++i)
-        if (editor->nodes[i].links.links)
-            free(editor->nodes[i].links.links);
-    free(editor->nodes);
+    node_editor_clear(editor);
+    config_cleanup(&editor->conf);
 }
 
 static struct node_link*
@@ -284,7 +304,7 @@ node_editor_gui(struct nk_context *ctx, struct node_editor *nodedit, struct nk_r
     const struct nk_input *in = &ctx->input;
     struct nk_command_buffer *canvas;
     int updated = -1;
-    struct node_info *infos = nodedit->conf->nodes;
+    struct node_info *infos = nodedit->conf.nodes;
 
     if (nk_begin(ctx, "aigraph", win_size, flags))
     {
@@ -335,20 +355,46 @@ node_editor_gui(struct nk_context *ctx, struct node_editor *nodedit, struct nk_r
                     {
                         nk_label(ctx, info->outputs[i].name, NK_TEXT_ALIGN_RIGHT | NK_TEXT_ALIGN_MIDDLE);
                     }
-                    for (int i = 0; i < info->prop_count; ++i)
+                    for (int j = 0; j < info->prop_count; ++j)
                     {
-                        sprintf_s(pname, NK_LEN(pname), "#%s", info->props[i].name);
-                        switch (info->props[i].type)
+                        sprintf_s(pname, NK_LEN(pname), "#%s", info->props[j].name);
+                        switch (info->props[j].type)
                         {
                             case FIELD_INT: 
-                                it->props[i].i = nk_propertyi(ctx, pname, -100, it->props[i].i, 100, 1, 1);
+                                it->props[j].i = nk_propertyi(ctx, pname, -100, it->props[j].i, 100, 1, 1);
                                 break;
                             case FIELD_FLOAT:
-                                it->props[i].f = nk_propertyf(ctx, pname, -100, it->props[i].f, 100, 1, 1);
+                                it->props[j].f = nk_propertyf(ctx, pname, -100, it->props[j].f, 100, 1, 1);
                                 break;
+                            case FIELD_STRING:
+                                if (nodedit->textedit.node == i && nodedit->textedit.property == j)
+                                {
+                                    nk_flags res = nk_edit_string_zero_terminated(ctx, NK_EDIT_FIELD | NK_EDIT_SIG_ENTER,
+                                        nodedit->textedit.buffer, NK_LEN(nodedit->textedit.buffer), nk_filter_ascii);
+                                    if (res & NK_EDIT_COMMITED)
+                                    {
+                                        it->props[j].s = _strdup(nodedit->textedit.buffer);
+                                        nodedit->textedit.node = -1;
+                                        nodedit->textedit.property = -1;
+                                        nodedit->textedit.buffer[0] = '\0';
+                                    }
+                                }
+                                else
+                                {
+                                    char *str = it->props[j].s;
+                                    if (!str) str = "";
+                                    nk_flags res = nk_edit_string_zero_terminated(ctx, NK_EDIT_FIELD | NK_EDIT_SIG_ENTER,
+                                        str, (int)strlen(str), nk_filter_ascii);
+                                    if (res & NK_EDIT_ACTIVATED)
+                                    {
+                                        nodedit->textedit.node = i;
+                                        nodedit->textedit.property = j;
+                                        strcpy_s(nodedit->textedit.buffer, NK_LEN(nodedit->textedit.buffer), str);
+                                    }
+                                }
                             case FIELD_ENUM:
-                                {struct enum_info *e = &nodedit->conf->enums[info->props[i].enum_type];
-                                it->props[i].e = nk_combo(ctx, e->values, e->count, it->props[i].e, 
+                                {struct enum_info *e = &nodedit->conf.enums[info->props[j].enum_type];
+                                it->props[j].e = nk_combo(ctx, e->values, e->count, it->props[j].e, 
                                     25, nk_vec2(nk_layout_widget_bounds(ctx).w, 200));}
                                 break;
                         }
@@ -391,6 +437,7 @@ node_editor_gui(struct nk_context *ctx, struct node_editor *nodedit, struct nk_r
                             nodedit->linking.active = nk_true;
                             nodedit->linking.input_id = i;
                             nodedit->linking.input_slot = n;
+                            nodedit->linking.input_type = infos[it->type].outputs[n].type;
                         }
 
                         /* draw curve from linked node slot to mouse position */
@@ -412,26 +459,26 @@ node_editor_gui(struct nk_context *ctx, struct node_editor *nodedit, struct nk_r
                         circle.y = node->bounds.y + space * (float)row + node->header_height + space / 2;
                         circle.w = 8; circle.h = 8;
                         nk_fill_circle(canvas, circle, nk_rgb(100, 100, 100));
-                        if (nk_input_is_mouse_hovering_rect(in, circle))
-                        {
-                            struct node_link *link = find_node_input(it, n);
-                            if (nk_input_is_mouse_released(in, NK_BUTTON_LEFT) && !link &&
-                                nodedit->linking.active && nodedit->linking.input_id != i) {
-                                nodedit->linking.active = nk_false;
+                        char *type = infos[it->type].inputs[n].type;
+                        if (nk_input_is_mouse_hovering_rect(in, circle) 
+                            && nk_input_is_mouse_released(in, NK_BUTTON_LEFT) 
+                            && nodedit->linking.active && nodedit->linking.input_id != i
+                            && (!type || !strcmp(type, nodedit->linking.input_type))) {
+                            int link_already_exists = 0;
+                            for (int i = 0; i < it->links.size; ++i)
+                            {
+                                struct node_link *link = get_link(&it->links, i);
+                                if (link->type == LINK_INBOUND && link->slot == n)
+                                {
+                                    link_already_exists = 1;
+                                    break;
+                                }
+                            }
+                            nodedit->linking.active = nk_false;
+                            if (!link_already_exists)
+                            {
                                 node_editor_link(nodedit, nodedit->linking.input_id,
                                     nodedit->linking.input_slot, i, n);
-                                /* if link creates a cycle, remove it */
-                                if (!tsort(nodedit->nodes, nodedit->node_count, NULL))
-                                    node_editor_unlink(nodedit, nodedit->linking.input_id,
-                                        nodedit->linking.input_slot, i, n);
-                            }
-                            if (nk_input_is_mouse_pressed(in, NK_BUTTON_LEFT) && link &&
-                                !nodedit->linking.active) {
-                                nodedit->linking.active = nk_true;
-                                nodedit->linking.input_id = link->other_id;
-                                nodedit->linking.input_slot = link->other_slot;
-                                node_editor_unlink(nodedit, link->other_id, link->other_slot,
-                                    i, link->slot);
                             }
                         }
                     }
@@ -502,7 +549,7 @@ node_editor_gui(struct nk_context *ctx, struct node_editor *nodedit, struct nk_r
                 }
                 else
                 {
-                    for (int i = 0; i < nodedit->conf->node_count; i++)
+                    for (int i = 0; i < nodedit->conf.node_count; i++)
                     {
                         if (nk_contextual_item_label(ctx, infos[i].name, NK_TEXT_CENTERED))
                         {
@@ -696,7 +743,7 @@ node_editor_save(struct node_editor *editor, char *path)
             struct node_link *link = get_link(&n->links, j);
             if (link->type == LINK_INBOUND) is_const[link->slot] = 0;
         }
-        for (int j = 0; j < editor->conf->nodes[n->type].input_count; ++j)
+        for (int j = 0; j < editor->conf.nodes[n->type].input_count; ++j)
         {
             if (is_const[j])
             {
@@ -723,7 +770,7 @@ node_editor_save(struct node_editor *editor, char *path)
     for (int i = 0; i < editor->node_count; ++i)
     {
         struct node *n = &editor->nodes[i];
-        struct node_info *info = &editor->conf->nodes[n->type];
+        struct node_info *info = &editor->conf.nodes[n->type];
         for (int j = 0; j < info->prop_count; ++j)
         {
             SDL_WriteLE32(file, i);
@@ -745,12 +792,36 @@ node_editor_save(struct node_editor *editor, char *path)
         editor_printf(editor, "successfully saved into file '%s'", path);
 }
 
-static void node_editor_clear(struct node_editor *editor)
+static void 
+node_editor_load_config(struct node_editor *ed, char *path)
 {
-    struct config *config = editor->conf;
-    struct print_ops *console = editor->console;
-    node_editor_cleanup(editor);
-    node_editor_init(editor, config, console);
+    if (ed->node_count)
+    {
+        editor_print(ed, "config is already loaded. if you want to update it, run update-config");
+        return;
+    }
+
+    FILE *f = fopen(path, "rb");
+
+    if (!f) 
+    { 
+        editor_print(ed, "invalid path"); 
+        return; 
+    }
+
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    char *string = malloc(fsize + 1);
+    fread(string, 1, fsize, f);
+    fclose(f);
+
+    string[fsize] = 0;
+
+    struct json_value_s *json = json_parse(string, fsize);
+    config_load_from_json(&ed->conf, (struct json_object_s*)json->payload);
+    free(json);
 }
 
 static void
@@ -814,7 +885,7 @@ node_editor_load(struct node_editor *editor, char *path)
             node_type type = (node_type)SDL_ReadLE16(file);
             uint32_t x_int = SDL_ReadLE32(file);
             uint32_t y_int = SDL_ReadLE32(file);
-            FAIL_IF(type < 0 || type >= editor->conf->node_count);
+            FAIL_IF(type < 0 || type >= editor->conf.node_count);
             nodes[i].type = type;
             nodes[i].x = *((float*)(&x_int));
             nodes[i].y = *((float*)(&y_int));
@@ -903,7 +974,7 @@ node_editor_load(struct node_editor *editor, char *path)
 
     if (0) {
 error:
-        editor_print(editor, "error while reading file", path);
+        editor_printf(editor, "error while reading file %s", path);
     }
 
 cleanup:

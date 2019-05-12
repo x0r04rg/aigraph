@@ -22,7 +22,7 @@
 #define NK_INCLUDE_DEFAULT_FONT
 #define NK_IMPLEMENTATION
 #define NK_SDL_GL3_IMPLEMENTATION
-#include <nuklear.h>
+#include "nuklear.h"
 #include "nuklear_sdl_gl3.h"
 
 #define WINDOW_WIDTH 1200
@@ -35,7 +35,7 @@
 #define CONSOLE_IMPLEMENTATION
 #include "console.h"
 
-int main(void)
+int main(int argc, char **argv)
 {
     /* Platform */
     SDL_Window *win;
@@ -49,8 +49,7 @@ int main(void)
 
     struct node_editor editor;
     struct console console;
-    struct config config;
-
+    
     console_init(&console);
 
     /* SDL setup */
@@ -87,8 +86,15 @@ int main(void)
     nk_sdl_font_stash_begin(&atlas);
     nk_sdl_font_stash_end();}
 
-    config_init_default(&config);
-    node_editor_init(&editor, &config, &console);
+    node_editor_init(&editor, &console);
+
+    if (argc == 3)
+    {
+        if (!strcmp(argv[1], "-conf"))
+        {
+            node_editor_load_config(&editor, argv[2]);
+        }
+    }
 
     bg.r = 0.10f, bg.g = 0.18f, bg.b = 0.24f, bg.a = 1.0f;
     float time = SDL_GetTicks() / 1000.0f;
@@ -112,8 +118,8 @@ int main(void)
 
         SDL_GetWindowSize(win, &win_width, &win_height);
         
-        node_editor_gui(ctx, &editor, nk_rect(0, 0, win_width, win_height), NK_WINDOW_NO_SCROLLBAR);
-        console_gui(ctx, &console, &editor, nk_rect(0, 0, win_width, win_height));
+        node_editor_gui(ctx, &editor, nk_rect(0.0f, 0.0f, (float)win_width, (float)win_height), NK_WINDOW_NO_SCROLLBAR);
+        console_gui(ctx, &console, &editor, nk_rect(0.0f, 0.0f, (float)win_width, (float)win_height));
 
         /* Draw */
         glViewport(0, 0, win_width, win_height);
@@ -130,7 +136,6 @@ int main(void)
 
 cleanup:
     console_cleanup(&console);
-    config_cleanup(&config);
     node_editor_cleanup(&editor);
     nk_sdl_shutdown();
     SDL_GL_DeleteContext(glContext);

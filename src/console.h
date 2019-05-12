@@ -2,9 +2,9 @@
 #define INPUT_SIZE 256
 
 struct console;
-static void console_print(struct console *console, char *string);
-static void console_printfv(struct console *console, char *fmt, va_list args);
-static void console_printf(struct console *console, char *fmt, ...);
+static void console_print(struct console *console, const char *string);
+static void console_printfv(struct console *console, const char *fmt, va_list args);
+static void console_printf(struct console *console, const char *fmt, ...);
 
 #ifdef CONSOLE_IMPLEMENTATION
 struct console
@@ -59,7 +59,7 @@ console_cleanup(struct console *console)
 }
 
 static void
-console_print(struct console *console, char *string)
+console_print(struct console *console, const char *string)
 {
     if (console->history_size == console->history_capacity)
     {
@@ -71,7 +71,7 @@ console_print(struct console *console, char *string)
 }
 
 static void 
-console_printfv(struct console *console, char *fmt, va_list args)
+console_printfv(struct console *console, const char *fmt, va_list args)
 {
     char buf[INPUT_SIZE];
     _vsnprintf(buf, INPUT_SIZE, fmt, args);
@@ -79,7 +79,7 @@ console_printfv(struct console *console, char *fmt, va_list args)
 }
 
 static void 
-console_printf(struct console *console, char *fmt, ...)
+console_printf(struct console *console, const char *fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
@@ -90,7 +90,7 @@ console_printf(struct console *console, char *fmt, ...)
 static void 
 console_execute(struct console *console, struct node_editor *editor, char *string)
 {
-#define ARGCHECK(cmd, cond) do { if (!(cond)) { console_print(console, "error: wrong number of arguments for '%s' command", cmd); return; } } while(0)
+#define ARGCHECK(cmd, cond) do { if (!(cond)) { console_printf(console, "error: wrong number of arguments for '%s' command", cmd); return; } } while(0)
 
     char buf[INPUT_SIZE];
     char *p = string;
@@ -117,6 +117,11 @@ console_execute(struct console *console, struct node_editor *editor, char *strin
         ARGCHECK("load", argc == 1);
         sprintf_s(buf, NK_LEN(buf), "%s.aig", p);
         node_editor_load(editor, buf);
+    }
+    else if (!strcmp(buf, "load-config"))
+    {
+        ARGCHECK("load-config", argc == 1);
+        node_editor_load_config(editor, p);
     }
     else
     {
@@ -166,7 +171,6 @@ console_gui(struct nk_context *ctx, struct console *console, struct node_editor 
 
         /* draw padding if needed */
         struct nk_rect c = nk_window_get_content_region(ctx);
-        struct nk_rect b = nk_layout_space_bounds(ctx);
         float pad = c.h - (console->history_size + 1) * 29;
         if (pad > 0)
         {
@@ -194,7 +198,7 @@ console_gui(struct nk_context *ctx, struct console *console, struct node_editor 
         if (w->layout)
         {
             float offset = (console->history_size + 1) * 29 + 4 - w->layout->bounds.h;
-            if (offset > 0) *w->layout->offset_y = offset;
+            if (offset > 0) *w->layout->offset_y = (nk_uint)offset;
         }
     }
 }
