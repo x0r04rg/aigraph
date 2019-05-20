@@ -9,6 +9,8 @@
   <ItemGroup>
     <ClCompile Include="..\src\main.c" />
     <ClCompile Include="..\src\json.c" />
+    <ClCompile Include="..\src\allocator.c" />
+    <ClCompile Include="..\src\json_builder.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\src\node_editor.h" />
@@ -17,5 +19,7 @@
     <ClInclude Include="..\src\json.h" />
     <ClInclude Include="..\src\nuklear.h" />
     <ClInclude Include="..\src\config.h" />
+    <ClInclude Include="..\src\json_helper.h" />
+    <ClInclude Include="..\src\allocator.h" />
   </ItemGroup>
 </Project>

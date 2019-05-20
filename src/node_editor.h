@@ -30,7 +30,7 @@ union node_property
 };
 
 struct node {
-    node_type type;
+    char *type;
     struct nk_rect bounds;
     struct node_link_list links;
     float *consts;
@@ -155,7 +155,7 @@ editor_printf(struct node_editor *editor, const char *fmt, ...)
 }
 
 static void
-node_editor_add(struct node_editor *editor, node_type type, float pos_x, float pos_y)
+node_editor_add(struct node_editor *editor, char *type, float pos_x, float pos_y)
 {
     struct node_info *info = &editor->conf.nodes[type];
     struct node *node;
@@ -825,167 +825,85 @@ node_editor_load_config(struct node_editor *ed, char *path)
 }
 
 static void
-node_editor_load(struct node_editor *editor, char *path)
+node_editor_load(struct node_editor *ed, char *path)
 {
-#define READ(dst, size, n) do { if (!SDL_RWread(file, dst, size, n)) goto error; } while(0)
-#define SEEK(offset, mode) do { if (SDL_RWseek(file, offset, mode) == -1) goto error; } while(0)
-#define FAIL_IF(cond) do { if ((cond)) goto error; } while(0)
+    node_editor_clear(ed);
 
-    struct node_data {
-        node_type type;
-        float x, y;
-    };
+    FILE *f = fopen(path, "rb");
 
-    struct link_data {
-        int input_id, output_id;
-        int input_slot, output_slot;
-    };
-
-    struct const_data {
-        int node_id;
-        int node_slot;
-        float value;
-    };
-
-    struct property_data {
-        int node_id;
-        int idx;
-        int value;
-    };
-
-    SDL_RWops *file = SDL_RWFromFile(path, "r");
-    struct nk_vec2 scroll;
-    struct node_data *nodes = NULL;
-    struct link_data *links = NULL;
-    struct const_data *consts = NULL;
-    struct property_data *props = NULL;
-
-    if (!file) { editor_print(editor, SDL_GetError()); return; }
-
-    /* read magic */
-    char magic[8];
-    READ(&magic, 1, NK_LEN(magic));
-    if (strcmp(magic, "aigraph"))
+    if (!f)
     {
-        editor_print(editor, "error: invalid file");
-        goto cleanup;
+        editor_print(ed, "invalid path");
+        return;
     }
 
-    /* read scroll */
-    READ(&scroll, sizeof scroll, 1);
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    fseek(f, 0, SEEK_SET);
 
-    /* read nodes */
-    int node_count = (int)SDL_ReadLE32(file);
-    FAIL_IF(node_count < 0 || node_count > 4096);
-    if (node_count)
+    char *string = malloc(fsize + 1);
+    fread(string, 1, fsize, f);
+    fclose(f);
+
+    string[fsize] = 0;
+
+    struct json_value_s *json = json_parse(string, fsize);
+    
+    struct json_value_s *field;
+    if ((field = json_find_by_name(json->payload, "config")))
     {
-        nodes = malloc(node_count * sizeof *nodes);
-        for (int i = 0; i < node_count; ++i)
+        config_load_from_json(ed->conf, field->payload);
+    }
+    if ((field = json_find_by_name(json->payload, "nodes")))
+    {
+        assert(ed->conf.node_count > 0);
+        assert(field->value->type == json_type_array);
+        struct json_array_s *nodes = field->value->payload;
+
+        for (struct json_array_element_s *it = nodes->start; it != NULL; it = it->next)
         {
-            node_type type = (node_type)SDL_ReadLE16(file);
-            uint32_t x_int = SDL_ReadLE32(file);
-            uint32_t y_int = SDL_ReadLE32(file);
-            FAIL_IF(type < 0 || type >= editor->conf.node_count);
-            nodes[i].type = type;
-            nodes[i].x = *((float*)(&x_int));
-            nodes[i].y = *((float*)(&y_int));
+            assert(it->value->type == json_type_object);
+            struct json_object_s *node = field->value->payload;
+                
+            int x, y;
+            char *type;
+
+            assert(json_get_int_by_name(node, "x", &x));
+            assert(json_get_int_by_name(node, "y", &y));
+            assert(json_get_string_by_name(node, "type", &type));
+            
+            node_editor_add(ed, _strdup(type), x, y);
+        }
+    }
+    if ((field = json_find_by_name(json->payload, "links")))
+    {
+        assert(field->value->type == json_type_array);
+        struct json_array_s *links = field->value->payload;
+
+        for (struct json_array_element_s *it = links->start; it != NULL; it = it->next)
+        {
+            assert(it->value->type == json_type_object);
+            struct json_object_s *link = field->value->payload;
+
+            int in_id, in_slot, out_id, out_slot;
+            assert(json_get_int_by_name(link, "in_id", &in_id));
+            assert(json_get_int_by_name(link, "in_slot", &in_slot));
+            assert(json_get_int_by_name(link, "out_id", &out_id));
+            assert(json_get_int_by_name(link, "out_slot", &out_slot));
+
+            node_editor_link(ed, in_id, in_slot, out_id, out_slot);
+        }
+    }
+    if ((field = json_find_by_name(json->payload, "props")))
+    {
+        assert(field->value->type == json_type_array);
+        struct json_array_s *props = field->value->payload;
+
+        for (struct json_array_element_s *it = props->start; it != NULL; it = it->next)
+        {
+            assert(it->value->type == json_type_object);
         }
     }
 
-    /* read links */
-    int link_count = (int)SDL_ReadLE32(file);
-    FAIL_IF(link_count < 0 || link_count > node_count * node_count);
-    if (link_count)
-    {
-        links = malloc(link_count * sizeof *links);
-        for (int i = 0; i < link_count; ++i)
-        {
-            int ii = (int)SDL_ReadLE32(file);
-            int oi = (int)SDL_ReadLE32(file);
-            int is = (int)SDL_ReadU8(file);
-            int os = (int)SDL_ReadU8(file);
-            FAIL_IF(ii < 0 || ii >= node_count);
-            FAIL_IF(oi < 0 || oi >= node_count);
-            FAIL_IF(is < 0);
-            FAIL_IF(os < 0);
-            links[i].input_id = ii;
-            links[i].output_id = oi;
-            links[i].input_slot = is;
-            links[i].output_slot = os;
-        }
-    }
-
-    /* read consts */
-    int const_count = (int)SDL_ReadLE32(file);
-    FAIL_IF(const_count < 0);
-    if (const_count)
-    {
-        consts = malloc(const_count * sizeof *consts);
-        for (int i = 0; i < const_count; ++i)
-        {
-            int id = (int)SDL_ReadLE32(file);
-            uint32_t value = SDL_ReadLE32(file);
-            int slot = (int)SDL_ReadU8(file);
-            FAIL_IF(id < 0 || id >= node_count);
-            FAIL_IF(slot < 0);
-            consts[i].node_id = id;
-            consts[i].node_slot = slot;
-            consts[i].value = *((float*)(&value));
-        }
-    }
-
-    /* read properties */
-    int property_count = (int)SDL_ReadLE32(file);
-    FAIL_IF(property_count < 0);
-    if (property_count)
-    {
-        props = malloc(property_count * sizeof *props);
-        for (int i = 0; i < property_count; ++i)
-        {
-            int id = (int)SDL_ReadLE32(file);
-            int value = (int)SDL_ReadLE32(file);
-            int idx = (int)SDL_ReadU8(file);
-            FAIL_IF(id < 0 || id >= node_count);
-            FAIL_IF(idx < 0);
-            props[i].node_id = id;
-            props[i].value = value;
-            props[i].idx = idx;
-        }
-    }
-
-    node_editor_clear(editor);
-
-    /* TODO verify data */
-    for (int i = 0; i < node_count; ++i)
-        node_editor_add(editor, nodes[i].type, nodes[i].x, nodes[i].y);
-    for (int i = 0; i < link_count; ++i)
-        node_editor_link(editor, links[i].input_id, links[i].input_slot,
-            links[i].output_id, links[i].output_slot);
-    for (int i = 0; i < const_count; ++i)
-        editor->nodes[consts[i].node_id].consts[consts[i].node_slot] =
-            consts[i].value;
-    for (int i = 0; i < property_count; ++i)
-        editor->nodes[props[i].node_id].props[props[i].idx].i =
-            props[i].value;
-    editor->scrolling = scroll;
-
-    editor_printf(editor, "file loaded: %d nodes, %d links, %d consts, %d properties",
-        node_count, link_count, const_count, property_count);
-
-    if (0) {
-error:
-        editor_printf(editor, "error while reading file %s", path);
-    }
-
-cleanup:
-    if (nodes) free(nodes);
-    if (links) free(links);
-    if (consts) free(consts);
-    if (props) free(props);
-    SDL_RWclose(file);
-    return;
-
-#undef READ
-#undef SEEK
-#undef FAIL_IF
+    free(json);
 }
