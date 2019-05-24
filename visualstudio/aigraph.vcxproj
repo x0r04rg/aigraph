@@ -144,12 +144,17 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="..\src\allocator.c" />
+    <ClCompile Include="..\src\hash.c" />
+    <ClCompile Include="..\src\hashtable.c" />
     <ClCompile Include="..\src\json.c" />
-    <ClCompile Include="..\src\json_builder.c" />
+    <ClCompile Include="..\src\json_helper.c" />
     <ClCompile Include="..\src\main.c" />
+    <ClCompile Include="..\src\vector.c" />
     <ClInclude Include="..\src\allocator.h" />
+    <ClInclude Include="..\src\collections.h" />
     <ClInclude Include="..\src\config.h" />
     <ClInclude Include="..\src\console.h" />
+    <ClInclude Include="..\src\hash.h" />
     <ClInclude Include="..\src\json.h" />
     <ClInclude Include="..\src\json_helper.h" />
     <ClInclude Include="..\src\node_editor.h" />
