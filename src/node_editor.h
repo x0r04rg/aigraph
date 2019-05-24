@@ -6,11 +6,7 @@
 
 #define NODE_WIDTH 180.0f
 
-typedef enum { LINK_INBOUND, LINK_OUTBOUND } link_type;
-typedef enum { MARK_NONE, MARK_TEMPORARY, MARK_PERMAMENT } node_mark;
-
 struct node_link {
-    link_type type;
     int slot;
     int other_id;
     int other_slot;
@@ -30,12 +26,11 @@ union node_property
 };
 
 struct node {
-    char *type;
+    int id, next;
+    struct node_info *type;
     struct nk_rect bounds;
     struct node_link_list links;
-    float *consts;
     union node_property *props;
-    node_mark mark; // needed for topological search
 };
 
 struct node_linking {
@@ -50,6 +45,7 @@ struct node_editor {
     struct console *console;
     struct node *nodes;
     int node_count, nodes_capacity;
+    int first_free;
     struct nk_rect bounds;
     int selected_id;
     struct nk_vec2 scrolling;
@@ -108,8 +104,7 @@ is_hovering_curve(float mx, float my, float ax, float ay, float c1x, float c1y,
 }
 
 static void 
-add_link(struct node_link_list *list, enum link_type type, int slot, int other_id, 
-    int other_slot)
+add_link(struct node_link_list *list, int slot, int other_id, int other_slot)
 {
     if (list->size == list->capacity)
     {
@@ -118,7 +113,6 @@ add_link(struct node_link_list *list, enum link_type type, int slot, int other_i
         list->capacity = new_capacity;
     }
     struct node_link link;
-    link.type = type;
     link.slot = slot;
     link.other_id = other_id;
     link.other_slot = other_slot;
@@ -154,24 +148,30 @@ editor_printf(struct node_editor *editor, const char *fmt, ...)
     va_end(args);
 }
 
-static void
-node_editor_add(struct node_editor *editor, char *type, float pos_x, float pos_y)
+static int
+node_editor_next_id(struct node_editor *ed)
 {
-    struct node_info *info = &editor->conf.nodes[type];
+    return ed->node_count;
+}
+
+static void
+node_editor_add(struct node_editor *editor, int id, struct node_info *type, float pos_x, float pos_y)
+{
     struct node *node;
-    if (editor->node_count == editor->nodes_capacity)
+    if (id >= editor->nodes_capacity)
     {
         size_t new_capacity = editor->nodes_capacity ? 2 * editor->nodes_capacity : 10;
+        if (id >= new_capacity) new_capacity = id;
         editor->nodes = realloc(editor->nodes, new_capacity * sizeof(struct node));
         editor->nodes_capacity = (int)new_capacity;
     }
-    node = &editor->nodes[editor->node_count++];
+    editor->node_count += 1;
+    node = &editor->nodes[id];
     memset(node, 0, sizeof *node);
     node->type = type;
     node->bounds = nk_rect(pos_x, pos_y, NODE_WIDTH, (float)(30 * 
-        (info->input_count + info->output_count + info->prop_count) + 35));
-    node->consts = calloc(info->input_count, sizeof *node->consts);
-    node->props = calloc(info->prop_count, sizeof *node->props);
+        (type->input_count + type->output_count + type->prop_count) + 35));
+    node->props = calloc(type->prop_count, sizeof *node->props);
 }
 
 static void 
@@ -217,8 +217,7 @@ static void
 node_editor_link(struct node_editor *editor, int in_id, int in_slot,
     int out_id, int out_slot)
 {
-    add_link(&editor->nodes[in_id].links, LINK_OUTBOUND, in_slot, out_id, out_slot);
-    add_link(&editor->nodes[out_id].links, LINK_INBOUND, out_slot, in_id, in_slot);
+    add_link(&editor->nodes[in_id].links, in_slot, out_id, out_slot);
 }
 
 static void
@@ -292,9 +291,6 @@ find_node_input(struct node *node, int slot)
     return NULL;
 }
 
-static struct compiled_graph* node_editor_compile(struct node_editor *editor);
-static int tsort(struct node *nodes, int node_count, struct node **sorted);
-
 static int
 node_editor_gui(struct nk_context *ctx, struct node_editor *nodedit, struct nk_rect win_size, 
     nk_flags flags)
@@ -304,7 +300,6 @@ node_editor_gui(struct nk_context *ctx, struct node_editor *nodedit, struct nk_r
     const struct nk_input *in = &ctx->input;
     struct nk_command_buffer *canvas;
     int updated = -1;
-    struct node_info *infos = nodedit->conf.nodes;
 
     if (nk_begin(ctx, "aigraph", win_size, flags))
     {
@@ -336,7 +331,7 @@ node_editor_gui(struct nk_context *ctx, struct node_editor *nodedit, struct nk_r
                     it->bounds.y - nodedit->scrolling.y, it->bounds.w, it->bounds.h));
 
                 /* execute node window */
-                if (nk_group_begin(ctx, infos[it->type].name, NK_WINDOW_MOVABLE|NK_WINDOW_NO_SCROLLBAR|NK_WINDOW_BORDER|NK_WINDOW_TITLE))
+                if (nk_group_begin(ctx, it->type->name, NK_WINDOW_MOVABLE|NK_WINDOW_NO_SCROLLBAR|NK_WINDOW_BORDER|NK_WINDOW_TITLE))
                 {
                     /* always have last selected node on top */
 
@@ -349,7 +344,7 @@ node_editor_gui(struct nk_context *ctx, struct node_editor *nodedit, struct nk_r
 
                     /* ================= NODE CONTENT =====================*/
                     nk_layout_row_dynamic(ctx, 25, 1);
-                    struct node_info *info = &infos[it->type];
+                    struct node_info *info = it->type;
                     char pname[16];
                     for (int i = 0; i < info->output_count; ++i)
                     {
@@ -425,7 +420,7 @@ node_editor_gui(struct nk_context *ctx, struct node_editor *nodedit, struct nk_r
 
                     /* output connector */
                     space = 29;
-                    for (n = 0; n < infos[it->type].output_count; ++n) {
+                    for (n = 0; n < it->type->output_count; ++n) {
                         struct nk_rect circle;
                         circle.x = node->bounds.x + node->bounds.w-4;
                         circle.y = node->bounds.y + space * (float)n + node->header_height + space / 2;
@@ -437,7 +432,7 @@ node_editor_gui(struct nk_context *ctx, struct node_editor *nodedit, struct nk_r
                             nodedit->linking.active = nk_true;
                             nodedit->linking.input_id = i;
                             nodedit->linking.input_slot = n;
-                            nodedit->linking.input_type = infos[it->type].outputs[n].type;
+                            nodedit->linking.input_type = it->type->outputs[n].type;
                         }
 
                         /* draw curve from linked node slot to mouse position */
@@ -452,14 +447,14 @@ node_editor_gui(struct nk_context *ctx, struct node_editor *nodedit, struct nk_r
 
                     /* input connector */
                     space = 29;
-                    for (n = 0; n < infos[it->type].input_count; ++n) {
+                    for (n = 0; n < it->type->input_count; ++n) {
                         struct nk_rect circle;
-                        int row = n + infos[it->type].output_count + infos[it->type].prop_count;
+                        int row = n + it->type->output_count + it->type->prop_count;
                         circle.x = node->bounds.x-4;
                         circle.y = node->bounds.y + space * (float)row + node->header_height + space / 2;
                         circle.w = 8; circle.h = 8;
                         nk_fill_circle(canvas, circle, nk_rgb(100, 100, 100));
-                        char *type = infos[it->type].inputs[n].type;
+                        char *type = it->type->inputs[n].type;
                         if (nk_input_is_mouse_hovering_rect(in, circle) 
                             && nk_input_is_mouse_released(in, NK_BUTTON_LEFT) 
                             && nodedit->linking.active && nodedit->linking.input_id != i
@@ -486,14 +481,12 @@ node_editor_gui(struct nk_context *ctx, struct node_editor *nodedit, struct nk_r
                 {
                     /* draw node output links */
                     for (int i = 0; i < it->links.size; ++i) {
-                        if (get_link(&it->links, i)->type == LINK_INBOUND)
-                            continue;
                         struct node_link *link = get_link(&it->links, i);
                         struct node *ni = it;
                         struct node *no = &nodedit->nodes[link->other_id];
                         float spacei = 29;
                         float spaceo = 29;
-                        int o_idx = link->other_slot + infos[no->type].output_count + infos[no->type].prop_count;
+                        int o_idx = link->other_slot + no->type->output_count + no->type->prop_count;
                         struct nk_vec2 l0 = nk_layout_space_to_screen(ctx,
                             nk_vec2(ni->bounds.x + ni->bounds.w, 3.0f + ni->bounds.y + spacei * (float)(link->slot) + 43));
                         struct nk_vec2 l1 = nk_layout_space_to_screen(ctx,
@@ -551,10 +544,10 @@ node_editor_gui(struct nk_context *ctx, struct node_editor *nodedit, struct nk_r
                 {
                     for (int i = 0; i < nodedit->conf.node_count; i++)
                     {
-                        if (nk_contextual_item_label(ctx, infos[i].name, NK_TEXT_CENTERED))
+                        if (nk_contextual_item_label(ctx, nodedit->conf.nodes[i].name, NK_TEXT_CENTERED))
                         {
                             struct nk_rect b = nk_layout_widget_bounds(ctx);
-                            node_editor_add(nodedit, (node_type)i, b.x + nodedit->scrolling.x,
+                            node_editor_add(nodedit, &nodedit->conf.nodes[i], b.x + nodedit->scrolling.x,
                                 b.y + nodedit->scrolling.y);
                         }
                     }
@@ -575,102 +568,6 @@ node_editor_gui(struct nk_context *ctx, struct node_editor *nodedit, struct nk_r
     }
     nk_end(ctx);
     return !nk_window_is_closed(ctx, "NodeEdit");
-}
-
-/* depth-first topological sort */
-static int 
-tsort(struct node *nodes, int node_count, struct node **sorted)
-{
-    struct stack_frame
-    {
-        struct node *node;
-        int loop_counter;
-    };
-
-    int result = nk_true;
-
-    int sorted_count = 0;
-
-    struct node **unmarked = malloc(node_count * sizeof *unmarked);
-    int unmarked_count = 0;
-
-    struct stack_frame *stack = malloc(node_count * sizeof *stack);
-    int stack_size = 0;
-
-    for (int i = 0; i < node_count; i++)
-    {
-        nodes[i].mark = MARK_NONE;
-        unmarked[i] = &nodes[i];
-    }
-
-    unmarked_count = node_count;
-
-    while (unmarked_count)
-    {
-        struct node *n = unmarked[0];
-
-        stack[stack_size++] = (struct stack_frame) { n, 0 };
-
-        while (stack_size)
-        {
-            struct stack_frame *s = &stack[stack_size - 1];
-            n = s->node;
-
-            if (n->mark == MARK_NONE)
-            {
-                for (int i = 0; i < unmarked_count; ++i)
-                {
-                    if (unmarked[i] == n)
-                    {
-                        unmarked[i] = unmarked[--unmarked_count];
-                        break;
-                    }
-                }
-
-                n->mark = MARK_TEMPORARY;
-            }
-
-            struct node *next = NULL;
-            for (int i = s->loop_counter; i < n->links.size; ++i)
-            {
-                struct node_link *l = get_link(&n->links, i);
-                if (l->type == LINK_OUTBOUND)
-                {
-                    next = &nodes[l->other_id];
-                    /* if next->mark == MARK_TEMPORARY then the graph is not acyclic */
-                    if (next->mark == MARK_TEMPORARY) { result = nk_false; goto cleanup; }
-                    if (next->mark == MARK_NONE) { s->loop_counter = i + 1; break; }
-                    next = NULL;
-                }
-            }
-
-            if (next)
-            {
-                stack[stack_size++] = (struct stack_frame) { next, 0 };
-                continue;
-            }
-
-            n->mark = MARK_PERMAMENT;
-            if (sorted) sorted[sorted_count++] = n;
-            --stack_size;
-        }
-    }
-
-    if (sorted)
-    {
-        for (int i = 0; i < sorted_count / 2; ++i)
-        {
-            struct node *temp = sorted[i];
-            sorted[i] = sorted[sorted_count - i - 1];
-            sorted[sorted_count - i - 1] = temp;
-        }
-    }
-
-    cleanup:
-    free(stack);
-    free(unmarked);
-
-    return result;
 }
 
 static void
@@ -849,33 +746,44 @@ node_editor_load(struct node_editor *ed, char *path)
 
     struct json_value_s *json = json_parse(string, fsize);
     
-    struct json_value_s *field;
-    if ((field = json_find_by_name(json->payload, "config")))
+    struct json_value_s *jconf, *jnodes;
+    jconf = json_get_value_by_name(json->payload, "config");
+    jnodes = json_get_value_by_name(json->payload, "nodes");
+    if (jconf)
     {
-        config_load_from_json(ed->conf, field->payload);
+        config_load_from_json(ed->conf, jconf);
     }
-    if ((field = json_find_by_name(json->payload, "nodes")))
+    if (jnodes)
     {
         assert(ed->conf.node_count > 0);
-        assert(field->value->type == json_type_array);
-        struct json_array_s *nodes = field->value->payload;
+        assert(jnodes->value->type == json_type_array);
+        struct json_array_s *nodes = jnodes->value->payload;
 
         for (struct json_array_element_s *it = nodes->start; it != NULL; it = it->next)
         {
             assert(it->value->type == json_type_object);
             struct json_object_s *node = field->value->payload;
                 
-            int x, y;
-            char *type;
+            int id, x, y;
+            char *type_name;
 
+            assert(json_get_int_by_name(node, "id", &id));
             assert(json_get_int_by_name(node, "x", &x));
             assert(json_get_int_by_name(node, "y", &y));
-            assert(json_get_string_by_name(node, "type", &type));
+            assert(json_get_string_by_name(node, "type", &type_name));
             
-            node_editor_add(ed, _strdup(type), x, y);
+            struct node_info *type = hashtable_get(&ed->conf.node_by_name, type_name);
+            assert(type);
+            node_editor_add(ed, type, x, y);
+        }
+
+        for (struct json_array_element_s *it = nodes->start; it != NULL; it = it->next)
+        {
+            assert(it->value->type == json_type_object);
+            struct json_object_s *node = field->value->payload;
         }
     }
-    if ((field = json_find_by_name(json->payload, "links")))
+    if ((field = json_get_value_by_name(json->payload, "links")))
     {
         assert(field->value->type == json_type_array);
         struct json_array_s *links = field->value->payload;
@@ -890,11 +798,13 @@ node_editor_load(struct node_editor *ed, char *path)
             assert(json_get_int_by_name(link, "in_slot", &in_slot));
             assert(json_get_int_by_name(link, "out_id", &out_id));
             assert(json_get_int_by_name(link, "out_slot", &out_slot));
+            assert(in_id > 0 && in_id < ed->node_count);
+            assert(out_id > 0 && out_id < ed->node_count);
 
             node_editor_link(ed, in_id, in_slot, out_id, out_slot);
         }
     }
-    if ((field = json_find_by_name(json->payload, "props")))
+    if ((field = json_get_value_by_name(json->payload, "props")))
     {
         assert(field->value->type == json_type_array);
         struct json_array_s *props = field->value->payload;
@@ -902,6 +812,16 @@ node_editor_load(struct node_editor *ed, char *path)
         for (struct json_array_element_s *it = props->start; it != NULL; it = it->next)
         {
             assert(it->value->type == json_type_object);
+            struct json_object_s *prop = field->value->payload;
+
+            int node_id, prop_id;
+            assert(json_get_int_by_name(prop, "node_id", &node_id));
+            assert(json_get_int_by_name(prop, "prop_id", &prop_id));
+            assert(node_id > 0 && node_id < ed->node_count);
+
+            struct json_value_s *value = json_get_value_by_name(prop, "value");
+            struct node_info *node_type = ed->nodes[node_id]->type;
+            switch (node->)
         }
     }
 

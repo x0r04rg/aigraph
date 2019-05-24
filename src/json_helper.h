@@ -57,7 +57,6 @@ void json_builder_pop_object(struct json_builder *b);
 //void json_object_pop_array(struct json_reader *r);
 //void json_reader_pop_object(struct json_reader *r);
 
-struct json_value_s *json_find_by_name(struct json_object_s *object, char *name);
 bool json_get_int(struct json_value_s *value, int *out);
 bool json_get_float(struct json_value_s *value, float *out);
 bool json_get_string(struct json_value_s *value, char **out);
@@ -65,4 +64,7 @@ bool json_copy_string(struct json_value_s *value, char **out, struct allocator *
 bool json_get_int_by_name(struct json_object_s *object, char *name, int *out);
 bool json_get_float_by_name(struct json_object_s *object, char *name, float *out);
 bool json_get_string_by_name(struct json_object_s *object, char *name, char **out);
+struct json_value_s *json_get_value_by_name(struct json_object_s *object, char *name);
+struct json_array_s *json_get_array_by_name(struct json_object_s *object, char *name);
+struct json_object_s *json_get_object_by_name(struct json_object_s *object, char *name);
 struct json_value_s *json_deep_copy(struct json_value_s *json);

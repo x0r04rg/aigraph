@@ -22,17 +22,19 @@ static void allocator_linear_free(struct allocator *base, void *buf)
     /* linear allocator can't free */
 }
 
-void allocator_linear_init(struct linear_allocator *a, size_t capacity)
+struct linear_allocator allocator_linear_create(size_t capacity)
 {
-    a->base.alloc = &allocator_linear_alloc;
-    a->base.free = &allocator_linear_free;
-    a->base.destroy = &linear_allocator_destroy;
-    a->capacity = capacity;
-    a->cursor = 0;
-    a->buffer = capacity > 0 ? malloc(capacity) : NULL;
+    struct linear_allocator a;
+    a.base.alloc = &allocator_linear_alloc;
+    a.base.free = &allocator_linear_free;
+    a.base.destroy = &linear_allocator_destroy;
+    a.capacity = capacity;
+    a.cursor = 0;
+    a.buffer = capacity > 0 ? malloc(capacity) : NULL;
+    return a;
 }
 
-void allocator_linear_deinit(struct linear_allocator *a)
+void allocator_linear_destroy(struct linear_allocator *a)
 {
     if (a->buffer) free(a->buffer);
 }
@@ -70,14 +72,16 @@ void allocator_stack_deinit(struct stack_allocator *a)
     if (a->buffer) free(a->buffer);
 }
 
-void allocator_stack_init(struct stack_allocator *a, size_t capacity)
+struct stack_allocator allocator_stack_create(size_t capacity)
 {
-    a->base.alloc = &allocator_stack_alloc;
-    a->base.free = &allocator_stack_free;
-    a->base.destroy = &allocator_stack_deinit;
-    a->capacity = capacity;
-    a->cursor = 0;
-    a->buffer = capacity > 0 ? malloc(capacity) : NULL;
+    struct stack_allocator a;
+    a.base.alloc = &allocator_stack_alloc;
+    a.base.free = &allocator_stack_free;
+    a.base.destroy = &allocator_stack_deinit;
+    a.capacity = capacity;
+    a.cursor = 0;
+    a.buffer = capacity > 0 ? malloc(capacity) : NULL;
+    return a;
 }
 
 void *mem_alloc(struct allocator *a, size_t size)

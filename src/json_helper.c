@@ -242,7 +242,7 @@ void json_builder_pop_object(struct json_builder *b)
     stack_pop(b);
 }
 
-struct json_value_s *json_find_by_name(struct json_object_s *object, char *name)
+struct json_value_s *json_get_value_by_name(struct json_object_s *object, char *name)
 {
     for (struct json_object_element *it = object->start; it != NULL; it = it->next)
     {
@@ -284,23 +284,37 @@ bool json_copy_string(struct json_value_s *value, char **out, struct allocator *
 
 bool json_get_int_by_name(struct json_object_s *object, char *name, int *out)
 {
-    struct json_value_s *value = json_find_by_name(object, name);
+    struct json_value_s *value = json_get_value_by_name(object, name);
     if (value == NULL) return false;
     return json_get_int(value, out);
 }
 
 bool json_get_float_by_name(struct json_object_s *object, char *name, float *out)
 {
-    struct json_value_s *value = json_find_by_name(object, name);
+    struct json_value_s *value = json_get_value_by_name(object, name);
     if (value == NULL) return false;
     return json_get_float(value, out);
 }
 
 bool json_get_string_by_name(struct json_object_s *object, char *name, char **out)
 {
-    struct json_value_s *value = json_find_by_name(object, name);
+    struct json_value_s *value = json_get_value_by_name(object, name);
     if (value == NULL) return false;
     return json_get_string(value, out);
+}
+
+struct json_array_s *json_get_array_by_name(struct json_object_s *object, char *name)
+{
+    struct json_value_s *value = json_get_value_by_name(object, name);
+    if (value == NULL || value->type != json_type_array) return NULL;
+    return value->payload;
+}
+
+struct json_object_s *json_get_object_by_name(struct json_object_s *object, char *name)
+{
+    struct json_value_s *value = json_get_value_by_name(object, name);
+    if (value == NULL || value->type != json_type_object) return NULL;
+    return value->payload;
 }
 
 static size_t json_get_size(struct json_value_s *json)

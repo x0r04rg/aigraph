@@ -27,11 +27,12 @@ typedef bool(*equals_func)(void*, void*);
 
 struct hashtable
 {
-    char *buffer;
+    void *buffer;
     int *buckets;
     struct hashtable_entry *entries;
+    void *keys, *values;
     size_t size, key_size, value_size;
-    int log_capacity, first_free;
+    int log_capacity;
     hash_func hash;
     equals_func equals;
 };
@@ -41,3 +42,5 @@ void hashtable_destroy(struct hashtable *ht);
 void *hashtable_insert(struct hashtable *ht, void *key, void *value);
 void *hashtable_get(struct hashtable *ht, void *key);
 bool hashtable_remove(struct hashtable *ht, void *key);
+inline void *hashtable_get_key(struct hashtable *ht, int i) { return ((char*)ht->keys) + i * ht->key_size; }
+inline void *hashtable_get_value(struct hashtable *ht, int i) { return ((char*)ht->values) + i * ht->value_size; }

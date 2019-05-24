@@ -22,10 +22,10 @@ struct stack_allocator
     void *buffer;
 };
 
-void allocator_linear_init(struct linear_allocator *a, size_t capacity);
-void allocator_linear_deinit(struct linear_allocator *a);
-void allocator_stack_init(struct stack_allocator *a, size_t capacity);
-void allocator_stack_deinit(struct stack_allocator *a);
+struct linear_allocator allocator_linear_create(size_t capacity);
+void allocator_linear_destroy(struct linear_allocator *a);
+struct stack_allocator allocator_stack_create(size_t capacity);
+void allocator_stack_destroy(struct stack_allocator *a);
 
 void *mem_alloc(struct allocator *a, size_t size);
 void *mem_calloc(struct allocator *a, size_t count, size_t size);

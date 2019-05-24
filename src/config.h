@@ -5,6 +5,8 @@
 #include "json.h"
 #include "allocator.h"
 #include "json_helper.h"
+#include "collections.h"
+#include "hash.h"
 
 #define LEN(x) (sizeof(x)/sizeof(x)[0])
 
@@ -54,6 +56,8 @@ struct config
     struct enum_info *enums;
     int enum_count;
     int node_count;
+    struct json_value_s *json;
+    struct hashtable node_by_name;
     void *buffer;
 };
 
@@ -63,74 +67,16 @@ streq(const char *str1, const char *str2)
     return strcmp(str1, str2) == 0;
 }
 
-static inline char*
-duplicate_string(struct allocator *a, const char *str)
-{
-    size_t length = strlen(str);
-    char* copy = mem_alloc(a, length);
-    strcpy_s(copy, length, str);
-    return copy;
-}
-
-//static void
-//config_load_from_json(struct config *conf, struct json_reader *r)
-//{
-//    struct linear_allocator a;
-//    allocator_linear_init(&a, 512);
-//
-//    memset(conf, 0, sizeof *conf);
-//
-//    if (json_reader_try_push_object_by_name(r, "enums"))
-//    {
-//        conf->enum_count = json_reader_get_length(r);
-//        if (conf->enum_count)
-//        {
-//            conf->enums = mem_calloc(&a, conf->enum_count, sizeof *conf->enums);
-//            for (int i = 0; i < conf->enum_count; ++i)
-//            {
-//                struct enum_info *e = &conf->enums[i];
-//                json_reader_get_name(r, &e->name);
-//                if (!json_reader_push_array(r)) goto fail;
-//                e->count = json_reader_get_length(r);
-//                if (e->count)
-//                {
-//                    e->values = mem_calloc(&a, e->count, sizeof *e->values);
-//                    for (int j = 0; j < e->count; ++j)
-//                    {
-//                        if (!json_reader_get_string(r, &e->values[j])) goto fail;
-//                        json_reader_next(r);
-//                    }
-//                }
-//                json_reader_pop_array(r);
-//            }
-//        }
-//        json_reader_pop_array(r);
-//    }
-//    if (json_reader_try_push_object_by_name(r, "nodes"))
-//    {
-//        conf->node_count = json_reader_get_length(r);
-//        if (conf->node_count)
-//        {
-//            conf->nodes = mem_calloc(&a, conf->enum_count, sizeof *conf->nodes);
-//            for (int i = 0; i < conf->enum_count; ++i)
-//            {
-//
-//            }
-//        }
-//    }
-//
-//    fail:
-//}
-
 static void
-config_load_from_json(struct config *conf, struct json_object_s *json)
+config_load_from_json(struct config *conf, struct json_value_s *json)
 {
-    struct linear_allocator a;
-    allocator_linear_init(&a, 512);
-
     memset(conf, 0, sizeof *conf);
 
-    for (struct json_object_element_s *field = json->start; field != NULL; field = field->next)
+    struct linear_allocator a = allocator_linear_create(256);
+    conf->json = json_deep_copy(json);
+    struct json_object_s *jconf = conf->json->payload;
+
+    for (struct json_object_element_s *field = jconf->start; field != NULL; field = field->next)
     {
         if (streq(field->name->string, "enums"))
         {
@@ -145,7 +91,7 @@ config_load_from_json(struct config *conf, struct json_object_s *json)
             int i = 0;
             for (struct json_object_element_s *enum_item = enums->start; enum_item != NULL; enum_item = enum_item->next)
             {
-                conf->enums[i].name = duplicate_string(&a, enum_item->name->string);
+                conf->enums[i].name = enum_item->name->string;
 
                 assert(enum_item->value->type == json_type_array);
                 struct json_array_s *values = enum_item->value->payload;
@@ -158,7 +104,7 @@ config_load_from_json(struct config *conf, struct json_object_s *json)
                 {
                     assert(val->value->type == json_type_string);
                     struct json_string_s *str = val->value->payload;
-                    conf->enums[i].values[j] = duplicate_string(&a, str->string);
+                    conf->enums[i].values[j] = str->string;
                     ++j;
                 }
                 ++i;
@@ -179,7 +125,7 @@ config_load_from_json(struct config *conf, struct json_object_s *json)
             {
                 assert(node_item->value->type == json_type_object);
 
-                conf->nodes[i].name = duplicate_string(&a, node_item->name->string);
+                conf->nodes[i].name = node_item->name->string;
 
                 struct json_object_s *node_obj = node_item->value->payload;
                 for (struct json_object_element_s *node_field = node_obj->start; node_field != NULL; node_field = node_field->next)
@@ -189,7 +135,7 @@ config_load_from_json(struct config *conf, struct json_object_s *json)
                     {
                         assert(node_field->value->type == json_type_string);
                         struct json_string_s *name = node_field->value->payload;
-                        conf->nodes[i].category = duplicate_string(&a, name->string);
+                        conf->nodes[i].category = name->string;
                     }
                     else if (streq(key, "properties"))
                     {
@@ -206,7 +152,7 @@ config_load_from_json(struct config *conf, struct json_object_s *json)
 
                             struct json_string_s *type = item->value->payload;
 
-                            conf->nodes[i].props[j].name = duplicate_string(&a, item->name->string);
+                            conf->nodes[i].props[j].name = item->name->string;
 
                             if (streq(type->string, "int"))
                             {
@@ -255,8 +201,8 @@ config_load_from_json(struct config *conf, struct json_object_s *json)
 
                             struct json_string_s *type = item->value->payload;
 
-                            conf->nodes[i].inputs[j].name = duplicate_string(&a, item->name->string);
-                            conf->nodes[i].inputs[j].type = duplicate_string(&a, type->string);
+                            conf->nodes[i].inputs[j].name = item->name->string;
+                            conf->nodes[i].inputs[j].type = type->string;
                         }
                     }
                     else if (streq(key, "outputs"))
@@ -274,8 +220,8 @@ config_load_from_json(struct config *conf, struct json_object_s *json)
 
                             struct json_string_s *type = item->value->payload;
 
-                            conf->nodes[i].outputs[j].name = duplicate_string(&a, item->name->string);
-                            conf->nodes[i].outputs[j].type = duplicate_string(&a, type->string);
+                            conf->nodes[i].outputs[j].name = item->name->string;
+                            conf->nodes[i].outputs[j].type = type->string;
                         }
                     }
                 }
@@ -283,107 +229,22 @@ config_load_from_json(struct config *conf, struct json_object_s *json)
             }
         }
     }
+    
+    conf->node_by_name = hashtable_create(sizeof(char*), sizeof(struct node_info*), ((int)log2(conf->node_count)) + 1, strhash, streq);
+    for (int i = 0; i < conf->node_count; ++i)
+    {
+        struct node_info *node = &conf->nodes[i];
+        hashtable_insert(&conf->node_by_name, &node->name, &node);
+    }
 
     conf->buffer = a.buffer;
 }
 
 static void
-config_write_to_json(struct config *conf, struct json_builder *json)
-{
-    json_builder_push_object_to_object(json, "enums");
-    for (int i = 0; i < conf->enum_count; ++i)
-    {
-        json_builder_push_array_to_object(json, conf->enums[i].name);
-        for (int j = 0; j < conf->enums[i].count; ++j)
-        {
-            json_builder_push_string_to_array(json, conf->enums[i].values[j]);
-        }
-        json_builder_pop_array(json);
-    }
-    json_builder_pop_object(json);
-
-    json_builder_push_object_to_object(json, "nodes");
-    for (int i = 0; i < conf->node_count; ++i)
-    {
-        struct node_info *node = &conf->nodes[i];
-
-        json_builder_push_object_to_object(json, node->name);
-        json_builder_push_string_to_object(json, node->category);
-
-        json_builder_push_object_to_object(json, "properties");
-        for (int j = 0; j < node->prop_count; ++j)
-        {
-            struct property_info *prop = node->props[j];
-            char *type = NULL;
-            switch (prop->type)
-            {
-            case FIELD_INT: type = "int"; break;
-            case FIELD_FLOAT: type = "float"; break;
-            case FIELD_STRING: type = "string"; break;
-            case FIELD_ENUM: type = conf->enums[prop->enum_type]; break;
-            }
-            assert(type != NULL);
-            json_builder_push_string_to_object(json, prop->name, type);
-        }
-        json_builder_pop_object(json);
-
-        json_builder_push_object_to_object(json, "inputs");
-        for (int j = 0; j < node->input_count; ++j)
-        {
-            json_builder_push_string_to_object(json, node->inputs[j].name, node->inputs[j].type);
-        }
-        json_builder_pop_object(json);
-
-        json_builder_push_object_to_object(json, "outputs");
-        for (int j = 0; j < node->output_count; ++j)
-        {
-            json_builder_push_string_to_object(json, node->outputs[j].name, node->outputs[j].type);
-        }
-        json_builder_pop_object(json);
-    }
-    json_builder_pop_array(json);
-}
-
-static void
 config_cleanup(struct config *conf)
 {
-    if (conf->enums)
-    {
-        for (int i = 0; i < conf->enum_count; ++i)
-        {
-            free(conf->enums[i].name);
-            for (int j = 0; j < conf->enums[i].count; ++j)
-            {
-                free(conf->enums[i].values[j]);
-            }
-        }
-        free(conf->enums);
-        conf->enums = NULL;
-    }
-    if (conf->nodes)
-    {
-        for (int i = 0; i < conf->node_count; ++i)
-        {
-            free(conf->nodes[i].name);
-            if (conf->nodes[i].category) free(conf->nodes[i].category);
-            for (int j = 0; j < conf->nodes[i].prop_count; ++j)
-            {
-                free(conf->nodes[i].props[j].name);
-            }
-            for (int j = 0; j < conf->nodes[i].input_count; ++j)
-            {
-                free(conf->nodes[i].inputs[j].name);
-                free(conf->nodes[i].inputs[j].type);
-            }
-            for (int j = 0; j < conf->nodes[i].output_count; ++j)
-            {
-                free(conf->nodes[i].outputs[j].name);
-                free(conf->nodes[i].outputs[j].type);
-            }
-        }
-        free(conf->nodes);
-        conf->nodes = NULL;
-    }
+    if (conf->buffer) free(conf->buffer);
+    hashtable_destroy(&conf->node_by_name);
 }
 
 #endif

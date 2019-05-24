@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <string.h>
 
+// source: https://bitbucket.org/bitsquid/foundation/src/default/murmur_hash.cpp
 uint64_t murmur_hash_64(const void *key, uint32_t len, uint64_t seed)
 {
     const uint64_t m = 0xc6a4a7935bd1e995ULL;
@@ -45,7 +46,7 @@ uint64_t murmur_hash_64(const void *key, uint32_t len, uint64_t seed)
     return h;
 }
 
-uint64_t string_hash(void *string)
+uint64_t strhash(void *string)
 {
     return murmur_hash_64(string, strlen(string), 133713371337ULL);
 }
